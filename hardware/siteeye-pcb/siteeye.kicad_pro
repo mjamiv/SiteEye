@@ -1,0 +1,70 @@
+{
+  "board": {
+    "3dviewports": [],
+    "design_settings": {
+      "defaults": {
+        "board_outline_line_width": 0.1,
+        "copper_line_width": 0.2,
+        "copper_text_size_h": 1.5,
+        "copper_text_size_v": 1.5,
+        "copper_text_thickness": 0.3,
+        "other_line_width": 0.15,
+        "silk_line_width": 0.15,
+        "silk_text_size_h": 1.0,
+        "silk_text_size_v": 1.0,
+        "silk_text_thickness": 0.15
+      },
+      "diff_pair_dimensions": [],
+      "drc_exclusions": [],
+      "rules": {
+        "min_clearance": 0.2,
+        "min_track_width": 0.2,
+        "min_via_annular_width": 0.15,
+        "min_via_diameter": 0.6
+      },
+      "track_widths": [0.25, 0.5, 1.0],
+      "via_dimensions": [{"diameter": 0.6, "drill": 0.3}]
+    },
+    "layer_presets": [],
+    "layers": {
+      "0": {"color": 0, "name": "F.Cu", "type": 0, "user_name": ""},
+      "31": {"color": 0, "name": "B.Cu", "type": 0, "user_name": ""}
+    }
+  },
+  "meta": {
+    "filename": "siteeye.kicad_pro",
+    "version": 1
+  },
+  "net_settings": {
+    "classes": [
+      {
+        "clearance": 0.2,
+        "name": "Default",
+        "track_width": 0.25,
+        "via_diameter": 0.6,
+        "via_drill": 0.3
+      },
+      {
+        "clearance": 0.2,
+        "name": "Power",
+        "track_width": 0.5,
+        "via_diameter": 0.6,
+        "via_drill": 0.3
+      }
+    ]
+  },
+  "schematic": {
+    "drawing": {
+      "default_line_thickness": 6.0,
+      "default_text_size": 50.0,
+      "pin_symbol_size": 0.0
+    },
+    "page_layout_descr_file": ""
+  },
+  "sheets": [["", ""]],
+  "text_variables": {
+    "TITLE": "SiteEye v0.1",
+    "REVISION": "0.1-beta",
+    "COMPANY": "SiteEye"
+  }
+}
