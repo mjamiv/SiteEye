@@ -1,4 +1,4 @@
-# SiteEye v0.1-beta
+# SiteEye v0.2
 
 *AI-powered wearable for construction sites. Voice + vision in a badge-sized form factor.*
 
@@ -58,7 +58,46 @@ Designed for construction jobsites — hands-free AI that clips to your vest.
 ### Reserved (future)
 | Pi Pin | GPIO | Purpose |
 |--------|------|---------|
+| 8 | GPIO 14 | BLE UART TX (nRF52840) |
+| 10 | GPIO 15 | BLE UART RX (nRF52840) |
+| 15 | GPIO 22 | BLE RST |
+| 16 | GPIO 23 | BLE INT |
 | 36 | GPIO 16 | NeoPixel RGB LED |
+
+---
+
+## OLED Eyes
+
+SiteEye has expressive Cozmo-style animated eyes powered by `oled_ui.py`:
+
+### Eye Style
+- **Filled white rounded rectangles** with black pupil circles and white highlight reflections
+- **Lid masking** — black rectangles slide over from top/bottom for expressions
+- **Asymmetric scaling** — eyes resize based on look direction (3D perspective effect)
+
+### Expressions
+| Expression | Description |
+|-----------|-------------|
+| Idle | Blinks, random look-around, micro-expressions (happy, curious, suspicious, confused) |
+| Listening | Wide open, raised eyebrows, pulsing dots |
+| Thinking | Squinted, furrowed brows, darting figure-8 eye movement |
+| Speaking | Relaxed, gentle sway, mood shifts |
+| Happy | Curved bottom lids (smile shape) |
+| Angry | Angled top lids, furrowed brows |
+| Sad | Droopy brows, angled bottom lids |
+| Confused | One brow raised, one flat |
+| Suspicious | One eye more squinted than the other |
+| Alert | Flash-wide with exclamation mark |
+| Sleepy | Slow droop to half-closed |
+| Wink | Right eye only |
+
+### Animation Features
+- **Boot sequence** — eyes open from closed with quick look-around
+- **Smooth pupil tracking** — lerp interpolation for natural movement
+- **Saccade movements** — 30% of look changes are fast snaps (like real eyes)
+- **Double blink** — 20% chance for natural feel
+- **Eased transitions** — smooth in/out on all state changes
+- **Eyebrows** — raised (surprise), furrowed (focus), angled (angry/sad)
 
 ---
 
@@ -111,6 +150,33 @@ WantedBy=multi-user.target
 
 ---
 
+## Setup
+
+### Quick Start
+```bash
+git clone https://github.com/mjamiv/SiteEye.git
+cd SiteEye
+scp main.py oled_ui.py setup-service.sh pi-molt@molt-device.local:~/
+ssh pi-molt@molt-device.local "bash setup-service.sh"
+```
+
+### Auto-Start Service
+The `setup-service.sh` script creates a systemd service that:
+- Extracts API keys from `.bashrc` into `~/.env`
+- Creates and enables `siteeye.service`
+- Starts `main.py` automatically on boot
+- Restarts on failure with 5-second delay
+
+### Manual Control
+```bash
+sudo systemctl status siteeye    # check status
+sudo systemctl restart siteeye   # restart
+sudo systemctl stop siteeye      # stop
+sudo journalctl -u siteeye -f    # live logs
+```
+
+---
+
 ## Architecture
 
 ```
@@ -135,7 +201,7 @@ WantedBy=multi-user.target
 7. Eyes return to idle animation
 
 ### Camera Flow
-1. Press Camera button → eyes look up ("capturing")
+1. Press Camera button → eyes flash alert ("capturing")
 2. rpicam-still 640×480 with vflip/hflip
 3. Photo sent to Telegram via bot API
 4. Eyes squint ("thinking") → Proxy `/vision` → GPT-4o analysis
@@ -154,17 +220,18 @@ De-esses sibilance, adds warmth. Tuned for small speaker output.
 
 | File | Purpose |
 |------|---------|
-| `main.py` | Device client |
-| `oled_ui.py` | OLED animated eyes display |
+| `main.py` | Device client — voice/camera flows, button handling |
+| `oled_ui.py` | OLED animated eyes engine (Cozmo-style) |
 | `server.py` | VPS proxy server |
+| `setup-service.sh` | Auto-start service installer |
 
 ---
 
 ## Known Issues & TODO
 - [ ] NeoPixel LED not purchased/wired
-- [ ] Auto-start systemd service for main.py
 - [ ] OLED sometimes needs `sudo killall python3` before restart (GPIO not released)
 - [ ] Custom enclosure design pending
+- [ ] BLE 5.0 mesh networking (nRF52840 DNP on PCB for v1)
 
 ---
 
@@ -178,6 +245,8 @@ De-esses sibilance, adds warmth. Tuned for small speaker output.
 7. **Buttons wire across, not along.** Same-side legs are always connected — wire to opposite legs.
 8. **Kill all python3 before restarting.** GPIO won't allocate if previous process still holds pins.
 9. **De-ess small speakers.** treble -7 @3kHz + lowpass 8kHz tames sibilance without killing clarity.
+10. **Filled rounded rects > outlined ellipses.** Way more contrast and readability on tiny OLEDs. The Cozmo/Vector style works.
+11. **Saccades make eyes feel alive.** Mix fast snaps with smooth tracking — real eyes do both.
 
 ---
 
