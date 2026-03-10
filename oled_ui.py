@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SiteEye OLED UI — Expressive animated eyes with personality."""
+"""SiteEye OLED UI v3 — Cozmo-style filled rounded rectangle eyes."""
 
 from luma.core.interface.serial import spi
 from luma.oled.device import sh1106
@@ -8,12 +8,10 @@ import time, threading, random, math
 
 
 def ease_in_out(t):
-    """Smooth easing for animations."""
     return t * t * (3 - 2 * t)
 
 
 def lerp(a, b, t):
-    """Linear interpolation."""
     return a + (b - a) * t
 
 
@@ -29,8 +27,9 @@ class OledUI:
         # Smooth pupil tracking
         self._pupil_x, self._pupil_y = 0.0, 0.0
         self._target_x, self._target_y = 0.0, 0.0
-        # Mood system
-        self._mood = 'neutral'  # neutral, happy, alert, sleepy
+        # Eye state
+        self._lid_top = 0.0  # 0 = open, 1 = fully closed from top
+        self._lid_bot = 0.0  # 0 = open, 1 = fully closed from bottom
         try:
             self.font = ImageFont.truetype(
                 '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf', 10)
@@ -45,317 +44,346 @@ class OledUI:
 
     def _show(self, img):
         with self._lock:
-            self.device.display(img)
+            if self._alive:
+                self.device.display(img)
 
     def _update_pupils(self, speed=0.15):
-        """Smooth interpolation toward target look direction."""
         self._pupil_x = lerp(self._pupil_x, self._target_x, speed)
         self._pupil_y = lerp(self._pupil_y, self._target_y, speed)
 
-    def _draw_eyes(self, draw, lid=1.0, wide=False, squint=False,
-                   happy=False, brow_raise=0.0, brow_furrow=False):
-        """Expressive eyes with eyebrows and multiple shapes.
-        
-        lid: 0.0 (closed) to 1.0 (open)
-        wide: bigger eyes (surprised/listening)
-        squint: narrow eyes (thinking/skeptical)
-        happy: curved bottom lids (pleased)
-        brow_raise: 0.0-1.0 how raised the eyebrows are
-        brow_furrow: angled angry/focused brows
+    def _draw_eyes(self, draw, lid_top=0.0, lid_bot=0.0, wide=False,
+                   happy=False, angry=False, sad=False, suspicious=False,
+                   brow_raise=0.0, brow_furrow=False, confused=False):
+        """Cozmo-style filled rounded rectangle eyes with lid masking.
+
+        lid_top: 0.0 (open) to 1.0 (closed from top)
+        lid_bot: 0.0 (open) to 1.0 (closed from bottom)
         """
-        lc, rc = 36, 92  # eye centers x
-        cy = 30  # eye center y (slightly higher to leave room for text)
-        
-        # Eye dimensions
-        if wide:
-            ew, eh = 20, 18
-        elif squint:
-            ew, eh = 18, 8
-        else:
-            ew, eh = 18, 14
+        # Eye centers and base dimensions
+        lc, rc = 34, 94
+        cy = 26
+        base_w = 22 if wide else 20
+        base_h = 20 if wide else 17
+        corner_r = 5
 
-        # Effective lid opening
-        top_open = int(eh * lid)
-        bot_open = int(eh * lid)
+        # Asymmetric scaling based on look direction
+        l_scale = 1.0 - self._pupil_x * 0.15  # left eye shrinks when looking right
+        r_scale = 1.0 + self._pupil_x * 0.15  # right eye grows when looking right
 
-        for i, ex in enumerate([lc, rc]):
-            top = cy - top_open
-            bot = cy + bot_open
+        for i, (ex, scale) in enumerate([(lc, l_scale), (rc, r_scale)]):
+            ew = int(base_w * scale)
+            eh = int(base_h * scale)
 
-            if lid < 0.1:
-                # Closed — horizontal line with slight curve
-                pts = [(ex - ew, cy), (ex - ew//2, cy - 1),
-                       (ex, cy - 2), (ex + ew//2, cy - 1), (ex + ew, cy)]
-                draw.line(pts, fill=1, width=2)
-            else:
-                # Draw eye outline
+            # Eye bounding box
+            x1 = ex - ew
+            y1 = cy - eh
+            x2 = ex + ew
+            y2 = cy + eh
+
+            # Total closed check
+            total_lid = lid_top + lid_bot
+            if total_lid >= 1.8:
+                # Fully closed — draw a line
+                line_y = cy + int((lid_bot - lid_top) * 3)
+                draw.line([(x1 + 2, line_y), (x2 - 2, line_y)], fill=1, width=2)
+                continue
+
+            # Draw filled white rounded rectangle (the eyeball)
+            draw.rounded_rectangle([x1, y1, x2, y2], radius=corner_r, fill=1)
+
+            # Pupil position
+            px = ex + int(self._pupil_x * ew * 0.35)
+            py = cy + int(self._pupil_y * eh * 0.3)
+            pupil_r = int(6 * scale) if wide else int(5 * scale)
+
+            # Draw pupil (black circle on white eye)
+            draw.ellipse((px - pupil_r, py - pupil_r,
+                          px + pupil_r, py + pupil_r), fill=0)
+
+            # Highlight reflection (white dot on pupil)
+            hr = max(1, pupil_r // 3)
+            hx = px - pupil_r // 2 + 1
+            hy = py - pupil_r // 2
+            draw.ellipse((hx, hy, hx + hr, hy + hr), fill=1)
+
+            # === LID MASKING ===
+            # Top lid (black rect covering from top)
+            if lid_top > 0.02:
+                lid_h = int(eh * 2 * lid_top)
+                # Angry: angled lids
+                if angry:
+                    pts = []
+                    if i == 0:  # left eye — angry slopes down-right
+                        pts = [(x1 - 2, y1 - 2), (x2 + 2, y1 - 2),
+                               (x2 + 2, y1 + lid_h + 4),
+                               (x1 - 2, y1 + lid_h - 2)]
+                    else:  # right eye — angry slopes down-left
+                        pts = [(x1 - 2, y1 - 2), (x2 + 2, y1 - 2),
+                               (x2 + 2, y1 + lid_h - 2),
+                               (x1 - 2, y1 + lid_h + 4)]
+                    draw.polygon(pts, fill=0)
+                elif suspicious:
+                    # One eye more closed than the other
+                    extra = 4 if i == 1 else 0
+                    draw.rectangle([x1 - 2, y1 - 2, x2 + 2, y1 + lid_h + extra],
+                                   fill=0)
+                else:
+                    draw.rectangle([x1 - 2, y1 - 2, x2 + 2, y1 + lid_h], fill=0)
+
+            # Bottom lid
+            if lid_bot > 0.02:
+                lid_h = int(eh * 2 * lid_bot)
                 if happy:
-                    # Top: normal arc, Bottom: curved up (smile shape)
-                    draw.arc((ex - ew, top, ex + ew, bot), 180, 360, fill=1)
-                    # Happy bottom — flat or curved up
-                    mid_bot = bot - int(eh * 0.3 * lid)
-                    draw.arc((ex - ew, mid_bot - (bot - mid_bot),
-                              ex + ew, bot), 0, 180, fill=1)
-                    # Close the sides
-                    side_y = cy - int((top_open - 2) * 0.7)
-                    draw.line([(ex - ew, side_y), (ex - ew, mid_bot)], fill=1)
-                    draw.line([(ex + ew, side_y), (ex + ew, mid_bot)], fill=1)
+                    # Happy: curved bottom lid (arc upward)
+                    arc_y = y2 - lid_h
+                    draw.pieslice([x1 - 2, arc_y - lid_h,
+                                   x2 + 2, y2 + lid_h + 4],
+                                  start=0, end=180, fill=0)
+                elif sad:
+                    # Sad: angled bottom (opposite of angry)
+                    if i == 0:
+                        pts = [(x1 - 2, y2 - lid_h + 4),
+                               (x2 + 2, y2 - lid_h),
+                               (x2 + 2, y2 + 4), (x1 - 2, y2 + 4)]
+                    else:
+                        pts = [(x1 - 2, y2 - lid_h),
+                               (x2 + 2, y2 - lid_h + 4),
+                               (x2 + 2, y2 + 4), (x1 - 2, y2 + 4)]
+                    draw.polygon(pts, fill=0)
                 else:
-                    # Standard rounded eye
-                    draw.ellipse((ex - ew, top, ex + ew, bot), outline=1, fill=0)
+                    draw.rectangle([x1 - 2, y2 - lid_h, x2 + 2, y2 + 4], fill=0)
 
-                # Pupil — smooth tracked position
-                px = ex + int(self._pupil_x * 8)
-                py = cy + int(self._pupil_y * 5 * lid)
-
-                if wide:
-                    # Bigger pupil when wide/surprised
-                    pr = 6
-                    draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=1)
-                    # Highlight dot (reflection)
-                    draw.ellipse((px - pr + 2, py - pr + 1,
-                                  px - pr + 4, py - pr + 3), fill=0)
-                elif squint:
-                    pr = 3
-                    draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=1)
+            # === EYEBROWS ===
+            brow_y = y1 - 3 - int(brow_raise * 6)
+            if brow_furrow or angry:
+                # Angled inward brows
+                if i == 0:
+                    draw.line([(x1 + 2, brow_y - 2), (x2 - 2, brow_y + 3)],
+                              fill=1, width=2)
                 else:
-                    pr = 5
-                    draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=1)
-                    # Highlight dot
-                    draw.ellipse((px - pr + 2, py - pr + 1,
-                                  px - pr + 4, py - pr + 3), fill=0)
-
-            # Eyebrows
-            brow_y = top - 4 - int(brow_raise * 5)
-            if brow_furrow:
-                # Angled inward — focused/concerned
-                if i == 0:  # left eye
-                    draw.line([(ex - ew + 2, brow_y - 3),
-                               (ex + ew - 4, brow_y + 2)], fill=1, width=2)
-                else:  # right eye
-                    draw.line([(ex - ew + 4, brow_y + 2),
-                               (ex + ew - 2, brow_y - 3)], fill=1, width=2)
+                    draw.line([(x1 + 2, brow_y + 3), (x2 - 2, brow_y - 2)],
+                              fill=1, width=2)
+            elif sad:
+                # Sad brows — angled outward (opposite of angry)
+                if i == 0:
+                    draw.line([(x1 + 2, brow_y + 3), (x2 - 2, brow_y - 1)],
+                              fill=1, width=2)
+                else:
+                    draw.line([(x1 + 2, brow_y - 1), (x2 - 2, brow_y + 3)],
+                              fill=1, width=2)
+            elif confused:
+                # One brow up, one down
+                if i == 0:
+                    draw.line([(x1 + 4, brow_y), (x2 - 4, brow_y - 4)],
+                              fill=1, width=2)
+                else:
+                    draw.line([(x1 + 4, brow_y + 2), (x2 - 4, brow_y + 2)],
+                              fill=1, width=2)
             elif brow_raise > 0.1:
-                # Raised — surprised/interested
-                draw.arc((ex - ew + 2, brow_y - 2, ex + ew - 2, brow_y + 6),
-                         200, 340, fill=1)
+                draw.arc((x1 + 4, brow_y - 3, x2 - 4, brow_y + 5),
+                         200, 340, fill=1, width=2)
 
-    def _draw_status_dots(self, draw, state='idle'):
-        """Small status indicator in corner."""
-        if state == 'idle':
-            # Subtle breathing dot
-            pass
-        elif state == 'listening':
-            # Three dots pulsing
-            for i in range(3):
-                x = 58 + i * 6
-                draw.ellipse((x, 58, x + 3, 61), fill=1)
-        elif state == 'thinking':
-            draw.text((40, 55), '· · ·', fill=1, font=self.font_sm)
-
-    # ─── States ───
+    # ─── Animations ───
 
     def boot_animation(self):
-        """Power-on eye opening sequence."""
+        """Power-on: eyes open from closed with look-around."""
         self._animating = True
-        # Start dark, then open
-        for step in range(20):
-            t = ease_in_out(step / 19)
+        # Open from fully closed
+        for step in range(15):
+            t = ease_in_out(step / 14)
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=t, brow_raise=t * 0.5)
+            self._draw_eyes(draw, lid_top=1.0 - t, brow_raise=t * 0.3)
             self._show(img)
-            time.sleep(0.05)
-        # Quick look around
-        for lx, ly in [(0.5, 0), (-0.5, 0), (0, -0.3), (0, 0)]:
-            self._target_x, self._target_y = lx, ly
-            for _ in range(8):
-                self._update_pupils(0.25)
+            time.sleep(0.04)
+        # Quick saccade look-around
+        for tx, ty in [(0.7, 0), (-0.7, 0), (0, -0.4), (0, 0)]:
+            self._target_x, self._target_y = tx, ty
+            # Fast saccade — snap most of the way instantly
+            self._pupil_x = lerp(self._pupil_x, tx, 0.7)
+            self._pupil_y = lerp(self._pupil_y, ty, 0.7)
+            for _ in range(6):
+                self._update_pupils(0.4)
                 img = self._frame()
                 draw = ImageDraw.Draw(img)
-                self._draw_eyes(draw, lid=1.0, brow_raise=0.3)
+                self._draw_eyes(draw, brow_raise=0.3)
                 self._show(img)
                 time.sleep(0.04)
-        # Settle
-        time.sleep(0.3)
+        time.sleep(0.2)
 
-    def eyes_idle(self, duration=30):
-        """Animated idle — blink, look around, occasional expressions."""
+    def eyes_idle(self, duration=3600):
+        """Animated idle with blinks, saccades, and micro-expressions."""
         self._animating = True
         end = time.time() + duration
-        next_look = time.time() + random.uniform(2, 4)
-        next_blink = time.time() + random.uniform(3, 6)
-        next_expression = time.time() + random.uniform(8, 15)
+        next_look = time.time() + random.uniform(1.5, 3)
+        next_blink = time.time() + random.uniform(2, 5)
+        next_expr = time.time() + random.uniform(6, 12)
         expression = None
-        expression_end = 0
-        breath_phase = 0
+        expr_end = 0
+        use_saccade = False
 
         while self._alive and self._animating and time.time() < end:
             now = time.time()
 
-            # Breathing — subtle pupil size oscillation via brow
-            breath_phase += 0.03
-            breath = math.sin(breath_phase) * 0.05
-
-            # Random look direction (smooth)
+            # Look direction changes
             if now > next_look:
                 self._target_x = random.uniform(-0.8, 0.8)
-                self._target_y = random.uniform(-0.4, 0.4)
-                # Sometimes center
-                if random.random() < 0.3:
+                self._target_y = random.uniform(-0.3, 0.3)
+                if random.random() < 0.25:
                     self._target_x, self._target_y = 0, 0
+                # 30% chance of saccade (fast snap) vs smooth tracking
+                use_saccade = random.random() < 0.3
+                if use_saccade:
+                    self._pupil_x = lerp(self._pupil_x, self._target_x, 0.8)
+                    self._pupil_y = lerp(self._pupil_y, self._target_y, 0.8)
                 next_look = now + random.uniform(1.5, 4)
 
             # Blink
             if now > next_blink:
-                # Fast blink with easing
-                blink_frames = [0.7, 0.3, 0.05, 0.05, 0.3, 0.7, 1.0]
-                for lid in blink_frames:
+                for lt in [0.3, 0.7, 1.0, 1.0, 0.7, 0.3, 0.0]:
+                    if not self._animating:
+                        return
                     self._update_pupils(0.2)
                     img = self._frame()
-                    draw = ImageDraw.Draw(img)
-                    self._draw_eyes(draw, lid=lid)
+                    self._draw_eyes(ImageDraw.Draw(img), lid_top=lt)
                     self._show(img)
-                    time.sleep(0.03)
-                # Occasional double blink
+                    time.sleep(0.025)
+                # Double blink 20%
                 if random.random() < 0.2:
-                    time.sleep(0.1)
-                    for lid in [0.3, 0.05, 0.3, 1.0]:
+                    time.sleep(0.08)
+                    for lt in [0.5, 1.0, 0.5, 0.0]:
                         img = self._frame()
-                        self._draw_eyes(ImageDraw.Draw(img), lid=lid)
+                        self._draw_eyes(ImageDraw.Draw(img), lid_top=lt)
                         self._show(img)
                         time.sleep(0.03)
-                next_blink = now + random.uniform(2.5, 7)
+                next_blink = now + random.uniform(2.5, 6)
                 continue
 
-            # Occasional micro-expressions
-            if now > next_expression:
-                expression = random.choice(['happy', 'curious', 'squint', None])
-                expression_end = now + random.uniform(1.5, 3)
-                next_expression = now + random.uniform(10, 20)
-
-            if expression and now > expression_end:
+            # Micro-expressions
+            if now > next_expr:
+                expression = random.choice([
+                    'happy', 'curious', 'suspicious', 'confused', None, None
+                ])
+                expr_end = now + random.uniform(1.5, 3)
+                next_expr = now + random.uniform(8, 18)
+            if expression and now > expr_end:
                 expression = None
 
-            # Draw frame
-            self._update_pupils(0.12)
+            # Draw
+            self._update_pupils(0.12 if not use_saccade else 0.3)
             img = self._frame()
             draw = ImageDraw.Draw(img)
 
             if expression == 'happy':
-                self._draw_eyes(draw, lid=0.85, happy=True)
+                self._draw_eyes(draw, lid_bot=0.3, happy=True)
             elif expression == 'curious':
-                self._draw_eyes(draw, lid=1.0, brow_raise=0.6)
-            elif expression == 'squint':
-                self._draw_eyes(draw, lid=0.7, squint=True)
+                self._draw_eyes(draw, brow_raise=0.7)
+            elif expression == 'suspicious':
+                self._draw_eyes(draw, lid_top=0.35, suspicious=True)
+            elif expression == 'confused':
+                self._draw_eyes(draw, brow_raise=0.3, confused=True)
             else:
-                self._draw_eyes(draw, lid=1.0, brow_raise=max(0, breath))
+                self._draw_eyes(draw)
 
             self._show(img)
-            time.sleep(0.08)
+            time.sleep(0.07)
 
     def eyes_listening(self):
-        """Wide open with raised brows — paying full attention."""
+        """Wide open, raised brows — full attention."""
         self._animating = False
         self._target_x, self._target_y = 0, 0
-        # Animate opening wide
         for step in range(10):
             t = ease_in_out(step / 9)
             self._update_pupils(0.3)
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=lerp(1.0, 1.0, t),
-                           wide=True, brow_raise=t * 0.8)
-            self._draw_status_dots(draw, 'listening')
+            self._draw_eyes(draw, wide=True, brow_raise=t * 0.8)
             self._show(img)
             time.sleep(0.03)
 
     def eyes_listening_pulse(self, duration=30):
-        """Listening with subtle pulsing to show it's active."""
+        """Listening with pulsing brows."""
         self._animating = True
         end = time.time() + duration
         phase = 0
         while self._alive and self._animating and time.time() < end:
-            phase += 0.15
-            pulse = 0.6 + math.sin(phase) * 0.2
+            phase += 0.12
+            pulse = 0.5 + math.sin(phase) * 0.3
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=1.0, wide=True, brow_raise=pulse)
-            # Animated dots
-            ndots = int((phase / 0.5) % 4)
-            dot_str = '·' * ndots
-            draw.text((52, 56), dot_str, fill=1, font=self.font)
+            self._draw_eyes(draw, wide=True, brow_raise=pulse)
+            # Pulsing dots
+            n = int(phase / 0.5) % 4
+            draw.text((52, 56), '·' * n, fill=1, font=self.font)
             self._show(img)
-            time.sleep(0.08)
+            time.sleep(0.07)
 
     def eyes_thinking(self):
-        """Squinted, looking up-right — processing."""
+        """Squinted, looking up-right, furrowed brows."""
         self._animating = False
-        self._target_x, self._target_y = 0.6, -0.4
+        self._target_x, self._target_y = 0.5, -0.4
         for step in range(12):
             t = ease_in_out(step / 11)
-            self._update_pupils(0.2)
+            self._update_pupils(0.25)
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=lerp(1.0, 0.6, t),
-                           squint=t > 0.5, brow_furrow=t > 0.5)
+            self._draw_eyes(draw, lid_top=lerp(0, 0.35, t),
+                           brow_furrow=t > 0.4)
             self._show(img)
             time.sleep(0.03)
 
     def eyes_thinking_anim(self, duration=30):
-        """Thinking with eyes darting — shows active processing."""
+        """Thinking with darting eyes."""
         self._animating = True
         end = time.time() + duration
         phase = 0
         while self._alive and self._animating and time.time() < end:
             phase += 0.08
-            # Eyes dart in small figure-8
-            self._target_x = math.sin(phase) * 0.4 + 0.3
-            self._target_y = math.sin(phase * 2) * 0.2 - 0.2
+            self._target_x = math.sin(phase) * 0.4 + 0.2
+            self._target_y = math.sin(phase * 2) * 0.15 - 0.2
             self._update_pupils(0.15)
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=0.6, squint=True, brow_furrow=True)
-            # Rotating dots
-            ndots = int(phase * 2) % 4
+            self._draw_eyes(draw, lid_top=0.3, brow_furrow=True)
+            n = int(phase * 2) % 4
             dots = ['·   ', ' ·  ', '  · ', '   ·']
-            draw.text((46, 56), dots[ndots], fill=1, font=self.font)
+            draw.text((46, 56), dots[n], fill=1, font=self.font)
             self._show(img)
-            time.sleep(0.08)
+            time.sleep(0.07)
 
     def eyes_speaking(self, text=None):
-        """Relaxed, engaged — talking back. Optional text below."""
+        """Relaxed, engaged expression."""
         self._animating = False
-        self._target_x, self._target_y = 0, 0.1
+        self._target_x, self._target_y = 0, 0.05
         for step in range(8):
             t = ease_in_out(step / 7)
             self._update_pupils(0.25)
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=lerp(0.6, 0.85, t))
+            self._draw_eyes(draw, lid_top=lerp(0.3, 0.05, t),
+                           lid_bot=lerp(0, 0.1, t))
             self._show(img)
             time.sleep(0.03)
 
     def eyes_speaking_anim(self, duration=30):
-        """Speaking with subtle expression changes."""
+        """Speaking with gentle sway and mood shifts."""
         self._animating = True
         end = time.time() + duration
         phase = 0
         while self._alive and self._animating and time.time() < end:
             phase += 0.06
-            # Gentle swaying
-            self._target_x = math.sin(phase * 0.7) * 0.2
+            self._target_x = math.sin(phase * 0.7) * 0.15
             self._update_pupils(0.1)
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            # Alternate between neutral and slightly happy
-            happy = math.sin(phase) > 0.5
-            self._draw_eyes(draw, lid=0.85, happy=happy)
+            happy = math.sin(phase) > 0.6
+            self._draw_eyes(draw, lid_bot=0.15 if happy else 0.08,
+                           happy=happy)
             self._show(img)
-            time.sleep(0.08)
+            time.sleep(0.07)
 
     def eyes_happy(self):
-        """Pleased expression — curved bottom lids."""
+        """Pleased — bottom lids curved up."""
         self._animating = False
         self._target_x, self._target_y = 0, 0
         for step in range(10):
@@ -363,83 +391,147 @@ class OledUI:
             self._update_pupils(0.3)
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=lerp(1.0, 0.85, t), happy=True)
+            self._draw_eyes(draw, lid_bot=lerp(0, 0.4, t), happy=True)
+            self._show(img)
+            time.sleep(0.03)
+
+    def eyes_angry(self):
+        """Angry — angled top lids, furrowed brows."""
+        self._animating = False
+        self._target_x, self._target_y = 0, 0
+        for step in range(10):
+            t = ease_in_out(step / 9)
+            self._update_pupils(0.3)
+            img = self._frame()
+            draw = ImageDraw.Draw(img)
+            self._draw_eyes(draw, lid_top=lerp(0, 0.3, t),
+                           angry=True, brow_furrow=True)
+            self._show(img)
+            time.sleep(0.03)
+
+    def eyes_sad(self):
+        """Sad — droopy brows and angled bottom lids."""
+        self._animating = False
+        self._target_x, self._target_y = 0, 0.2
+        for step in range(12):
+            t = ease_in_out(step / 11)
+            self._update_pupils(0.2)
+            img = self._frame()
+            draw = ImageDraw.Draw(img)
+            self._draw_eyes(draw, lid_top=lerp(0, 0.15, t),
+                           lid_bot=lerp(0, 0.15, t), sad=True)
+            self._show(img)
+            time.sleep(0.04)
+
+    def eyes_confused(self):
+        """Confused — one brow up, one flat."""
+        self._animating = False
+        self._target_x, self._target_y = -0.3, 0
+        for step in range(10):
+            t = ease_in_out(step / 9)
+            self._update_pupils(0.25)
+            img = self._frame()
+            draw = ImageDraw.Draw(img)
+            self._draw_eyes(draw, brow_raise=0.3, confused=True)
+            self._show(img)
+            time.sleep(0.03)
+
+    def eyes_suspicious(self):
+        """Suspicious — squinted, one eye more closed."""
+        self._animating = False
+        self._target_x, self._target_y = 0.4, 0
+        for step in range(10):
+            t = ease_in_out(step / 9)
+            self._update_pupils(0.2)
+            img = self._frame()
+            draw = ImageDraw.Draw(img)
+            self._draw_eyes(draw, lid_top=lerp(0, 0.4, t), suspicious=True)
             self._show(img)
             time.sleep(0.03)
 
     def eyes_alert(self):
-        """Quick snap to attention — error or important event."""
+        """Quick snap to attention — flash wide."""
         self._animating = False
         self._target_x, self._target_y = 0, 0
-        self._pupil_x, self._pupil_y = 0, 0  # Instant center
-        # Flash wide
+        self._pupil_x, self._pupil_y = 0, 0
         for _ in range(2):
             img = self._frame()
-            draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=1.0, wide=True, brow_raise=1.0)
+            self._draw_eyes(ImageDraw.Draw(img), wide=True, brow_raise=1.0)
             self._show(img)
-            time.sleep(0.1)
+            time.sleep(0.08)
             img = self._frame()
-            draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=0.8, wide=True, brow_raise=0.5)
+            self._draw_eyes(ImageDraw.Draw(img), wide=True, brow_raise=0.4)
             self._show(img)
-            time.sleep(0.1)
-        # Hold alert
+            time.sleep(0.08)
         img = self._frame()
         draw = ImageDraw.Draw(img)
-        self._draw_eyes(draw, lid=1.0, wide=True, brow_raise=0.8)
-        draw.text((52, 56), '!', fill=1, font=self.font)
+        self._draw_eyes(draw, wide=True, brow_raise=0.9)
+        draw.text((56, 56), '!', fill=1, font=self.font)
         self._show(img)
 
     def eyes_sleepy(self):
-        """Droopy, about to sleep."""
+        """Droopy, closing down."""
         self._animating = False
         self._target_x, self._target_y = 0, 0.3
-        for step in range(15):
-            t = ease_in_out(step / 14)
+        for step in range(18):
+            t = ease_in_out(step / 17)
             self._update_pupils(0.1)
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            self._draw_eyes(draw, lid=lerp(1.0, 0.25, t))
+            self._draw_eyes(draw, lid_top=lerp(0, 0.7, t),
+                           lid_bot=lerp(0, 0.2, t))
             self._show(img)
-            time.sleep(0.06)
+            time.sleep(0.05)
 
     def eyes_wink(self):
-        """Quick wink — right eye."""
+        """Right eye wink."""
         self._animating = False
-        for step in range(12):
-            if step < 4:
-                r_lid = lerp(1.0, 0.0, step / 3)
-            elif step < 8:
-                r_lid = 0.0
-            else:
-                r_lid = lerp(0.0, 1.0, (step - 8) / 3)
+        saved_x, saved_y = self._pupil_x, self._pupil_y
+
+        for step in range(14):
             img = self._frame()
             draw = ImageDraw.Draw(img)
-            # Left eye normal, right eye winking
-            # Draw left
-            lc, cy = 36, 30
-            ew, eh = 18, 14
-            draw.ellipse((lc - ew, cy - eh, lc + ew, cy + eh), outline=1, fill=0)
-            px = lc + int(self._pupil_x * 8)
-            py = cy + int(self._pupil_y * 5)
-            draw.ellipse((px - 5, py - 5, px + 5, py + 5), fill=1)
-            draw.ellipse((px - 3, py - 4, px - 1, py - 2), fill=0)
-            # Draw right with lid
-            rc = 92
-            if r_lid < 0.1:
-                draw.line([(rc - ew, cy), (rc + ew, cy)], fill=1, width=2)
+
+            if step < 4:
+                r_close = step / 3
+            elif step < 8:
+                r_close = 1.0
             else:
-                top = cy - int(eh * r_lid)
-                bot = cy + int(eh * r_lid)
-                draw.ellipse((rc - ew, top, rc + ew, bot), outline=1, fill=0)
-                px = rc + int(self._pupil_x * 8)
-                py = cy + int(self._pupil_y * 5 * r_lid)
-                pr = int(5 * r_lid)
-                if pr > 1:
-                    draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=1)
+                r_close = max(0, 1.0 - (step - 8) / 4)
+
+            # Draw left eye normal
+            lc, cy = 34, 26
+            ew, eh = 20, 17
+            draw.rounded_rectangle([lc - ew, cy - eh, lc + ew, cy + eh],
+                                    radius=5, fill=1)
+            px = lc + int(saved_x * ew * 0.35)
+            py = cy + int(saved_y * eh * 0.3)
+            draw.ellipse((px - 5, py - 5, px + 5, py + 5), fill=0)
+            draw.ellipse((px - 3, py - 4, px - 1, py - 2), fill=1)
+
+            # Draw right eye closing
+            rc = 94
+            if r_close > 0.9:
+                line_y = cy
+                draw.line([(rc - ew + 2, line_y), (rc + ew - 2, line_y)],
+                          fill=1, width=2)
+            else:
+                draw.rounded_rectangle([rc - ew, cy - eh, rc + ew, cy + eh],
+                                        radius=5, fill=1)
+                # Top lid mask
+                lid_h = int(eh * 2 * r_close)
+                if lid_h > 0:
+                    draw.rectangle([rc - ew - 2, cy - eh - 2,
+                                    rc + ew + 2, cy - eh + lid_h], fill=0)
+                if r_close < 0.8:
+                    px = rc + int(saved_x * ew * 0.35)
+                    py = cy + int(saved_y * eh * 0.3 * (1 - r_close))
+                    pr = int(5 * (1 - r_close))
+                    if pr > 1:
+                        draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=0)
+
             self._show(img)
-            time.sleep(0.035)
+            time.sleep(0.03)
 
     def show_text(self, text, eyes=True):
         """Word-wrapped text with optional small eyes at top."""
@@ -448,13 +540,14 @@ class OledUI:
         draw = ImageDraw.Draw(img)
 
         if eyes:
-            # Small eyes at top
-            for ex in [36, 92]:
-                draw.ellipse((ex - 10, 2, ex + 10, 14), outline=1, fill=0)
-                draw.ellipse((ex - 2, 5, ex + 2, 9), fill=1)
+            # Small rounded rect eyes at top
+            for ex in [34, 94]:
+                draw.rounded_rectangle([ex - 12, 1, ex + 12, 13],
+                                        radius=3, fill=1)
+                draw.ellipse((ex - 3, 4, ex + 3, 10), fill=0)
+                draw.ellipse((ex - 1, 5, ex + 1, 7), fill=1)
 
-        # Word wrap
-        start_y = 18 if eyes else 4
+        start_y = 17 if eyes else 4
         lines, cur = [], ''
         for w in text.split():
             if len(cur) + len(w) + 1 <= 21:
@@ -475,36 +568,6 @@ class OledUI:
             draw.text((110, y - 12), '…', fill=1, font=self.font)
         self._show(img)
 
-    def show_text_scroll(self, text, speed=0.8):
-        """Scrolling text display for longer messages."""
-        self._animating = True
-        lines, cur = [], ''
-        for w in text.split():
-            if len(cur) + len(w) + 1 <= 21:
-                cur = f'{cur} {w}' if cur else w
-            else:
-                if cur:
-                    lines.append(cur)
-                cur = w
-        if cur:
-            lines.append(cur)
-
-        if len(lines) <= 5:
-            self.show_text(text, eyes=False)
-            return
-
-        for offset in range(len(lines) - 4):
-            if not self._animating:
-                break
-            img = self._frame()
-            draw = ImageDraw.Draw(img)
-            y = 4
-            for line in lines[offset:offset + 5]:
-                draw.text((4, y), line, fill=1, font=self.font)
-                y += 12
-            self._show(img)
-            time.sleep(speed)
-
     def clear(self):
         self._animating = False
         self._show(self._frame())
@@ -524,30 +587,46 @@ class OledUI:
 if __name__ == '__main__':
     ui = OledUI()
 
-    print('Boot animation...')
+    print('Boot...')
     ui.boot_animation()
     time.sleep(1)
 
-    print('Idle eyes (8s)...')
-    ui.eyes_idle(8)
+    print('Idle (6s)...')
+    ui.eyes_idle(6)
 
     print('Listening...')
     ui.eyes_listening()
     time.sleep(1)
-    ui.eyes_listening_pulse(4)
+    ui.eyes_listening_pulse(3)
 
     print('Thinking...')
     ui.eyes_thinking()
     time.sleep(1)
-    ui.eyes_thinking_anim(4)
+    ui.eyes_thinking_anim(3)
 
     print('Speaking...')
     ui.eyes_speaking()
     time.sleep(1)
-    ui.eyes_speaking_anim(4)
+    ui.eyes_speaking_anim(3)
 
     print('Happy...')
     ui.eyes_happy()
+    time.sleep(2)
+
+    print('Angry...')
+    ui.eyes_angry()
+    time.sleep(2)
+
+    print('Sad...')
+    ui.eyes_sad()
+    time.sleep(2)
+
+    print('Confused...')
+    ui.eyes_confused()
+    time.sleep(2)
+
+    print('Suspicious...')
+    ui.eyes_suspicious()
     time.sleep(2)
 
     print('Alert!')
@@ -562,12 +641,12 @@ if __name__ == '__main__':
     ui.eyes_sleepy()
     time.sleep(2)
 
-    print('Text with eyes...')
-    ui.show_text('45F and clear in Merrick tonight')
+    print('Text...')
+    ui.show_text('SiteEye v3 ready for the jobsite')
     time.sleep(3)
 
-    print('Back to idle (8s)...')
-    ui.eyes_idle(8)
+    print('Idle (6s)...')
+    ui.eyes_idle(6)
 
     ui.cleanup()
     print('Done.')
