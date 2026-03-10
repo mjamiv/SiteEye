@@ -4,8 +4,6 @@
 import os, json, time, threading, subprocess, urllib.request, tempfile, random
 import http.client, base64
 from gpiozero import Button
-from luma.core.interface.serial import spi
-from luma.oled.device import sh1106
 from PIL import Image, ImageDraw, ImageFont
 
 # CONFIG
@@ -18,131 +16,45 @@ MIC_GAIN = 25
 MAX_REC = 30
 
 class Eyes:
+    """Wrapper around OledUI for Cozmo-style eyes."""
     def __init__(self):
-        s = spi(device=0, port=0, gpio_DC=24, gpio_RST=25, bus_speed_hz=500000)
-        self.dev = sh1106(s, width=128, height=64, rotate=2)
-        self.dev.contrast(255)
-        self._lock = threading.Lock()
-        self._alive = True
-        self._anim = False
-        try:
-            self.font = ImageFont.truetype(
-                '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf', 11)
-        except:
-            self.font = ImageFont.load_default()
-
-    def _f(self):
-        return Image.new('1', (128, 64), 0)
-
-    def _s(self, img):
-        with self._lock:
-            if self._alive:
-                self.dev.display(img)
-
-    def _eyes(self, d, lx=0, ly=0, lid=1.0, w=False):
-        for ex in [36, 92]:
-            eh = 16 if w else 14
-            t = 28 - int(eh * lid)
-            b = 28 + int(eh * lid)
-            if lid < 0.15:
-                d.line([(ex-18, 28), (ex+18, 28)], fill=1, width=2)
-            else:
-                d.ellipse((ex-18, t, ex+18, b), outline=1, fill=0)
-                px = ex + int(lx * 7)
-                py = 28 + int(ly * 4 * lid)
-                pr = 5 if w else 4
-                d.ellipse((px-pr, py-pr, px+pr, py+pr), fill=1)
+        from oled_ui import OledUI
+        self._ui = OledUI()
+        self._ui.boot_animation()
 
     def idle(self):
-        self._anim = True
-        lx, ly = 0, 0
-        nl = time.time() + random.uniform(2, 5)
-        nb = time.time() + random.uniform(3, 7)
-        while self._alive and self._anim:
-            now = time.time()
-            if now > nl:
-                lx = random.uniform(-1, 1)
-                ly = random.uniform(-0.5, 0.5)
-                if random.random() < 0.3:
-                    lx, ly = 0, 0
-                nl = now + random.uniform(2, 5)
-            if now > nb:
-                for lid in [0.6, 0.2, 0.0, 0.0, 0.2, 0.6, 1.0]:
-                    if not self._anim:
-                        return
-                    i = self._f()
-                    self._eyes(ImageDraw.Draw(i), lx, ly, lid)
-                    self._s(i)
-                    time.sleep(0.04)
-                nb = now + random.uniform(3, 8)
-                continue
-            i = self._f()
-            self._eyes(ImageDraw.Draw(i), lx, ly)
-            self._s(i)
-            time.sleep(0.1)
+        self._ui.eyes_idle(duration=3600)
 
     def _stop(self):
-        self._anim = False
-        time.sleep(0.15)
+        self._ui.stop_animation()
+        time.sleep(0.05)
 
     def listening(self):
         self._stop()
-        i = self._f()
-        d = ImageDraw.Draw(i)
-        self._eyes(d, 0, 0, 1.0, True)
-        d.text((32, 52), 'listening', fill=1, font=self.font)
-        self._s(i)
+        self._ui.eyes_listening()
 
     def thinking(self):
         self._stop()
-        i = self._f()
-        d = ImageDraw.Draw(i)
-        self._eyes(d, 0.5, -0.3, 0.5)
-        d.text((34, 52), 'thinking', fill=1, font=self.font)
-        self._s(i)
+        self._ui.eyes_thinking()
 
     def speaking(self):
         self._stop()
-        i = self._f()
-        d = ImageDraw.Draw(i)
-        self._eyes(d, 0, 0, 0.85)
-        self._s(i)
+        self._ui.eyes_speaking()
 
     def camera_look(self):
         self._stop()
-        i = self._f()
-        d = ImageDraw.Draw(i)
-        self._eyes(d, 0, -0.8, 1.0, True)
-        d.text((30, 52), 'capturing', fill=1, font=self.font)
-        self._s(i)
+        self._ui.eyes_alert()
 
     def text(self, txt):
         self._stop()
-        i = self._f()
-        d = ImageDraw.Draw(i)
-        lines, cur = [], ''
-        for w in txt.split():
-            if len(cur) + len(w) + 1 <= 20:
-                cur = f'{cur} {w}' if cur else w
-            else:
-                if cur:
-                    lines.append(cur)
-                cur = w
-        if cur:
-            lines.append(cur)
-        y = 4
-        for ln in lines[:5]:
-            d.text((4, y), ln, fill=1, font=self.font)
-            y += 13
-        self._s(i)
+        self._ui.show_text(txt)
 
     def go_idle(self):
+        self._stop()
         threading.Thread(target=self.idle, daemon=True).start()
 
     def die(self):
-        self._alive = False
-        self._anim = False
-        self.dev.cleanup()
+        self._ui.cleanup()
 
 
 def do_record(secs=5, stop_ev=None):
