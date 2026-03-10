@@ -148,10 +148,10 @@ def do_chat(text, img_path=None):
 
 def do_tts(text):
     payload = json.dumps({
-        'model': 'tts-1-hd',
+        'model': 'tts-1',
         'input': text[:4096],
         'voice': 'fable',
-        'speed': 1.0,
+        'speed': 1.1,
         'response_format': 'wav'
     }).encode()
     req = urllib.request.Request(
@@ -167,13 +167,23 @@ def do_tts(text):
     return p
 
 
-def do_snap():
+def do_snap(timeout=1500):
     p = tempfile.mktemp(suffix='.jpg')
     subprocess.run(
         ['rpicam-still', '-o', p, '--width', '640', '--height', '480',
-         '--nopreview', '-t', '2000', '--vflip', '--hflip'],
+         '--nopreview', '-t', str(timeout), '--vflip', '--hflip'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return p
+
+
+def do_snap_async():
+    """Start a photo capture in the background, return (thread, result_holder)."""
+    result = [None]
+    def _snap():
+        result[0] = do_snap(timeout=1200)
+    t = threading.Thread(target=_snap, daemon=True)
+    t.start()
+    return t, result
 
 
 def do_tg_photo(path, cap=''):
@@ -219,12 +229,29 @@ class Molt:
         if self._busy:
             return
         self._busy = True
+        photos = []
         try:
             self.ui.listening()
-            print('Recording...')
-            self._stop_ev.clear()
-            raw = do_record(MAX_REC, self._stop_ev)
 
+            # Snap photo at recording start (parallel with mic)
+            print('Recording + capturing...')
+            snap_t, snap_r = do_snap_async()
+            self._stop_ev.clear()
+            rec_start = time.time()
+            raw = do_record(MAX_REC, self._stop_ev)
+            rec_dur = time.time() - rec_start
+
+            # Collect first photo
+            snap_t.join(timeout=3)
+            if snap_r[0]:
+                photos.append(snap_r[0])
+
+            # Long recording? Snap another photo
+            if rec_dur > 10:
+                print('Long recording — extra snap...')
+                photos.append(do_snap(timeout=1000))
+
+            # Boost audio (while photo is already done)
             b = do_boost(raw)
             os.unlink(raw)
 
@@ -235,34 +262,44 @@ class Molt:
 
             if not txt.strip():
                 self.ui.text('No speech detected')
-                time.sleep(2)
+                time.sleep(1.5)
+                for p in photos:
+                    try: os.unlink(p)
+                    except: pass
                 self.ui.go_idle()
                 self._busy = False
                 return
 
             print(f'> {txt}')
             self.ui.text(txt)
-            time.sleep(1)
 
+            # Use first photo for vision-enhanced chat
             self.ui.thinking()
-            print('Thinking...')
-            resp = do_chat(txt)
+            print('Thinking (with vision)...')
+            img = photos[0] if photos else None
+            resp = do_chat(txt, img)
             print(f'< {resp}')
 
-            self.ui.text(resp)
+            # Start TTS immediately
             self.ui.speaking()
             print('Speaking...')
             t = do_tts(resp)
+            self.ui.text(resp)
             do_play(t)
             os.unlink(t)
 
             self.ui.text(resp)
-            time.sleep(3)
+            time.sleep(2)
 
         except Exception as e:
             print(f'ERR: {e}')
             self.ui.text(str(e)[:80])
             time.sleep(3)
+
+        # Cleanup photos
+        for p in photos:
+            try: os.unlink(p)
+            except: pass
 
         self.ui.go_idle()
         self._busy = False
