@@ -151,7 +151,7 @@ def chat():
 
 @app.route("/vision", methods=["POST"])
 def vision():
-    """Vision endpoint — accepts JSON with base64 image or file upload."""
+    """Vision endpoint — routes through OpenClaw gateway with multimodal support."""
     # Support JSON body (from v7 client)
     if request.is_json:
         data = request.get_json()
@@ -164,22 +164,30 @@ def vision():
     else:
         return jsonify({"error": "No image"}), 400
 
-    # Use OpenAI GPT-4o directly for vision (OpenClaw gateway doesn't support multimodal yet)
+    # Route through OpenClaw gateway (supports multimodal)
     try:
-        from openai import OpenAI
-        vision_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        resp = vision_client.chat.completions.create(
-            model="gpt-4o",
-            max_tokens=150,
-            messages=[
-                {"role": "system", "content": VISION_SYSTEM},
-                {"role": "user", "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                ]}
-            ]
+        resp = requests.post(
+            OPENCLAW_URL,
+            headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
+            json={
+                "model": "openai/gpt-4o",
+                "max_tokens": 150,
+                "messages": [
+                    {"role": "system", "content": VISION_SYSTEM},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                    ]}
+                ]
+            },
+            timeout=60,
         )
-        assistant_text = resp.choices[0].message.content
+        if resp.status_code == 200:
+            assistant_text = resp.json()["choices"][0]["message"]["content"]
+        else:
+            assistant_text = f"Gateway error {resp.status_code}: {resp.text[:60]}"
+    except requests.exceptions.Timeout:
+        assistant_text = "Thinking too hard. Try again."
     except Exception as e:
         assistant_text = f"Vision error: {str(e)[:60]}"
 
