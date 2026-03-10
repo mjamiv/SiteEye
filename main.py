@@ -167,6 +167,51 @@ def do_tts(text):
     return p
 
 
+def do_tts_play(text):
+    """TTS + play in one shot — sox pipes directly to aplay, no temp EQ file."""
+    payload = json.dumps({
+        'model': 'tts-1',
+        'input': text[:4096],
+        'voice': 'fable',
+        'speed': 1.1,
+        'response_format': 'wav'
+    }).encode()
+    req = urllib.request.Request(
+        'https://api.openai.com/v1/audio/speech',
+        data=payload,
+        headers={
+            'Authorization': f'Bearer {OPENAI_API_KEY}',
+            'Content-Type': 'application/json'
+        })
+    p = tempfile.mktemp(suffix='.wav')
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            with open(p, 'wb') as f:
+                while True:
+                    chunk = r.read(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+        # Sox EQ piped directly to aplay — no intermediate temp file
+        sox = subprocess.Popen(
+            ['sox', p, '-t', 'wav', '-b', '32', '-e', 'signed',
+             '-', 'rate', '48000', 'channels', '2',
+             'bass', '+6', 'treble', '-7', '3000', 'lowpass', '8000'],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        aplay = subprocess.Popen(
+            ['sudo', 'aplay', '-D', 'speaker', '-'],
+            stdin=sox.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        sox.stdout.close()
+        aplay.wait()
+        sox.wait()
+    except Exception as e:
+        print(f'TTS play error: {e}')
+    try:
+        os.unlink(p)
+    except:
+        pass
+
+
 def do_snap(timeout=1500):
     p = tempfile.mktemp(suffix='.jpg')
     subprocess.run(
@@ -280,16 +325,11 @@ class Molt:
             resp = do_chat(txt, img)
             print(f'< {resp}')
 
-            # Start TTS immediately
+            # Start TTS immediately — piped playback
             self.ui.speaking()
+            self.ui.text(resp)
             print('Speaking...')
-            t = do_tts(resp)
-            self.ui.text(resp)
-            do_play(t)
-            os.unlink(t)
-
-            self.ui.text(resp)
-            time.sleep(2)
+            do_tts_play(resp)
 
         except Exception as e:
             print(f'ERR: {e}')
@@ -321,15 +361,10 @@ class Molt:
             os.unlink(photo)
             print(f'< {resp}')
 
-            self.ui.text(resp)
             self.ui.speaking()
-            print('Speaking...')
-            t = do_tts(resp)
-            do_play(t)
-            os.unlink(t)
-
             self.ui.text(resp)
-            time.sleep(3)
+            print('Speaking...')
+            do_tts_play(resp)
 
         except Exception as e:
             print(f'ERR: {e}')
