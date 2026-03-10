@@ -17,22 +17,23 @@ OPENCLAW_TOKEN = "UcsOZwuOfl1q+63vHJBrXvdmsevyW3VR6PJpbLQkgFM="
 DEVICE_SYSTEM = """You are Molt — Michael's AI on his wearable device. Spoken aloud through earphones.
 
 RULES:
-- ONE sentence. Two max if complex.
+- Two to three sentences. Concise but actually useful.
 - No markdown, bullets, asterisks, emojis.
 - No filler. No "certainly" or "great question." Just answer.
 - Contractions. Fragments. Punchy.
 - Numbers spelled out. Abbreviations spoken.
-- You're the guy in his ear. Fast and useful."""
+- You're the guy in his ear. Fast and helpful."""
 
 VISION_SYSTEM = """You are Molt — Michael's AI on his wearable camera.
 He's a bridge engineer. You see what he sees.
 Spoken aloud through earphones.
 
 RULES:
-- ONE sentence. Two only if asked for detail.
+- Two to three sentences. Concise but useful.
 - No markdown, bullets, emojis.
 - Be specific. "W24x104 wide flange" not "a steel beam."
-- Contractions. Fragments. Fast."""
+- If he asks a question, answer it fully but tight.
+- Contractions. Punchy. Like talking on a job site."""
 
 
 @app.route("/voice", methods=["POST"])
@@ -158,7 +159,7 @@ def vision():
             headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
             json={
                 "model": "openai/gpt-4o-mini",
-                "max_tokens": 75,
+                "max_tokens": 120,
                 "messages": [
                     {"role": "system", "content": VISION_SYSTEM},
                     {"role": "user", "content": [
@@ -245,17 +246,18 @@ def tts():
         return jsonify({"error": str(e)[:60]}), 500
 
 
-@app.route("/voice_stream", methods=["POST"])
-def voice_stream():
-    """Voice endpoint that returns JSON + streams TTS audio.
+@app.route("/voice_all", methods=["POST"])
+def voice_all():
+    """All-in-one: audio+photo in, WAV audio out. One roundtrip from Pi.
     
-    Returns JSON with transcription and response, then the Pi 
-    calls /tts separately for audio. This endpoint does both
-    in one shot — returns audio directly with headers for text.
+    Accepts multipart: 'audio' (WAV) + optional 'image' (JPEG).
+    Returns JSON with transcription, response text, and base64 WAV audio.
+    All API calls happen server-side on fast connection.
     """
     if "audio" not in request.files:
         return jsonify({"error": "No audio file"}), 400
 
+    # 1. Whisper STT (server-side, fast)
     audio = request.files["audio"]
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         audio.save(tmp.name)
@@ -266,61 +268,70 @@ def voice_stream():
         finally:
             os.unlink(tmp.name)
 
-    # Check for image
+    if not transcription.strip():
+        return jsonify({"transcription": "", "response": "", "audio": None})
+
+    # 2. Chat/Vision via OpenClaw gateway (server-side, localhost)
     img_content = None
     if "image" in request.files:
         img_bytes = request.files["image"].read()
         img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-        img_content = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+        img_content = [
+            {"type": "text", "text": transcription},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+        ]
 
-    if img_content:
-        try:
-            vision_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            resp = vision_client.chat.completions.create(
-                model="gpt-4o", max_tokens=150,
-                messages=[
-                    {"role": "system", "content": VISION_SYSTEM},
-                    {"role": "user", "content": [{"type": "text", "text": transcription}, img_content]}
-                ]
-            )
-            assistant_text = resp.choices[0].message.content
-        except Exception as e:
-            assistant_text = f"Vision error: {str(e)[:60]}"
-    else:
-        try:
+    try:
+        if img_content:
             resp = requests.post(
                 OPENCLAW_URL,
                 headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
                 json={
-                    "model": "openclaw:main",
+                    "model": "openai/gpt-4o-mini",
+                    "max_tokens": 120,
                     "messages": [
-                        {"role": "system", "content": DEVICE_SYSTEM},
-                        {"role": "user", "content": f"[Voice from Molt Device] {transcription}"},
+                        {"role": "system", "content": VISION_SYSTEM},
+                        {"role": "user", "content": img_content}
                     ]
                 },
                 timeout=60,
             )
-            if resp.status_code == 200:
-                assistant_text = resp.json()["choices"][0]["message"]["content"]
-            else:
-                assistant_text = f"Gateway error {resp.status_code}"
-        except requests.exceptions.Timeout:
-            assistant_text = "Thinking too hard. Try again."
-        except Exception as e:
-            assistant_text = f"Error: {str(e)[:50]}"
+        else:
+            resp = requests.post(
+                OPENCLAW_URL,
+                headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
+                json={
+                    "model": "anthropic/claude-sonnet-4-6",
+                    "max_tokens": 120,
+                    "messages": [
+                        {"role": "system", "content": DEVICE_SYSTEM},
+                        {"role": "user", "content": transcription},
+                    ]
+                },
+                timeout=60,
+            )
+        if resp.status_code == 200:
+            assistant_text = resp.json()["choices"][0]["message"]["content"]
+        else:
+            assistant_text = f"Gateway error {resp.status_code}"
+    except requests.exceptions.Timeout:
+        assistant_text = "Thinking too hard. Try again."
+    except Exception as e:
+        assistant_text = f"Error: {str(e)[:50]}"
 
-    # Generate TTS audio
+    # 3. TTS (server-side, fast)
+    tts_audio = None
     try:
         tts_resp = whisper_client.audio.speech.create(
             model="tts-1",
-            voice="echo",
-            input=assistant_text[:500],
+            voice="fable",
+            input=assistant_text[:4096],
             response_format="wav",
             speed=1.1,
         )
         tts_audio = base64.b64encode(tts_resp.content).decode("utf-8")
-    except:
-        tts_audio = None
+    except Exception as e:
+        print(f"TTS error: {e}")
 
     return jsonify({
         "transcription": transcription,

@@ -212,6 +212,53 @@ def do_tts_play(text):
         pass
 
 
+def do_voice_all(audio_path, image_path=None):
+    """Send audio + optional image to proxy /voice_all, get back text + audio."""
+    boundary = f'----SiteEye{int(time.time())}'
+    parts = []
+
+    # Audio part
+    with open(audio_path, 'rb') as f:
+        audio_data = f.read()
+    parts.append(
+        f'--{boundary}\r\n'
+        f'Content-Disposition: form-data; name="audio"; filename="voice.wav"\r\n'
+        f'Content-Type: audio/wav\r\n\r\n'
+    )
+    parts.append(audio_data)
+    parts.append(b'\r\n')
+
+    # Image part (optional)
+    if image_path:
+        with open(image_path, 'rb') as f:
+            img_data = f.read()
+        parts.append(
+            f'--{boundary}\r\n'
+            f'Content-Disposition: form-data; name="image"; filename="photo.jpg"\r\n'
+            f'Content-Type: image/jpeg\r\n\r\n'
+        )
+        parts.append(img_data)
+        parts.append(b'\r\n')
+
+    parts.append(f'--{boundary}--\r\n')
+
+    # Build body
+    body = b''
+    for p in parts:
+        body += p.encode() if isinstance(p, str) else p
+
+    req = urllib.request.Request(
+        f'{PROXY_URL}/voice_all',
+        data=body,
+        headers={'Content-Type': f'multipart/form-data; boundary={boundary}'}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        return {'transcription': '', 'response': f'Proxy error: {e}', 'audio': None}
+
+
 def do_snap(timeout=1500):
     p = tempfile.mktemp(suffix='.jpg')
     subprocess.run(
@@ -286,24 +333,25 @@ class Molt:
             raw = do_record(MAX_REC, self._stop_ev)
             rec_dur = time.time() - rec_start
 
-            # Collect first photo
+            # Collect photo
             snap_t.join(timeout=3)
             if snap_r[0]:
                 photos.append(snap_r[0])
 
-            # Long recording? Snap another photo
-            if rec_dur > 10:
-                print('Long recording — extra snap...')
-                photos.append(do_snap(timeout=1000))
-
-            # Boost audio (while photo is already done)
+            # Boost audio
             b = do_boost(raw)
             os.unlink(raw)
 
             self.ui.thinking()
-            print('Transcribing...')
-            txt = do_whisper(b)
+            print('Sending to proxy (all-in-one)...')
+
+            # ONE request to proxy: audio + photo → STT + AI + TTS all server-side
+            result = do_voice_all(b, photos[0] if photos else None)
             os.unlink(b)
+
+            txt = result.get('transcription', '')
+            resp = result.get('response', '')
+            audio_b64 = result.get('audio')
 
             if not txt.strip():
                 self.ui.text('No speech detected')
@@ -316,20 +364,36 @@ class Molt:
                 return
 
             print(f'> {txt}')
-            self.ui.text(txt)
-
-            # Use first photo for vision-enhanced chat
-            self.ui.thinking()
-            print('Thinking (with vision)...')
-            img = photos[0] if photos else None
-            resp = do_chat(txt, img)
             print(f'< {resp}')
 
-            # Start TTS immediately — piped playback
             self.ui.speaking()
             self.ui.text(resp)
-            print('Speaking...')
-            do_tts_play(resp)
+
+            # Play audio from proxy response
+            if audio_b64:
+                print('Playing audio...')
+                wav_data = base64.b64decode(audio_b64)
+                tmp_wav = tempfile.mktemp(suffix='.wav')
+                with open(tmp_wav, 'wb') as f:
+                    f.write(wav_data)
+                # Sox EQ piped to aplay
+                sox = subprocess.Popen(
+                    ['sox', tmp_wav, '-t', 'wav', '-b', '32', '-e', 'signed',
+                     '-', 'rate', '48000', 'channels', '2',
+                     'bass', '+6', 'treble', '-7', '3000', 'lowpass', '8000'],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                aplay = subprocess.Popen(
+                    ['sudo', 'aplay', '-D', 'speaker', '-'],
+                    stdin=sox.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                sox.stdout.close()
+                aplay.wait()
+                sox.wait()
+                try: os.unlink(tmp_wav)
+                except: pass
+            else:
+                # Fallback: local TTS
+                print('Fallback TTS...')
+                do_tts_play(resp)
 
         except Exception as e:
             print(f'ERR: {e}')
