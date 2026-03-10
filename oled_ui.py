@@ -298,6 +298,7 @@ class OledUI:
             img = self._frame()
             draw = ImageDraw.Draw(img)
             self._draw_eyes(draw, wide=True, brow_raise=t * 0.8)
+            draw.text((34, 54), 'listening', fill=1, font=self.font)
             self._show(img)
             time.sleep(0.03)
 
@@ -312,9 +313,7 @@ class OledUI:
             img = self._frame()
             draw = ImageDraw.Draw(img)
             self._draw_eyes(draw, wide=True, brow_raise=pulse)
-            # Pulsing dots
-            n = int(phase / 0.5) % 4
-            draw.text((52, 56), '·' * n, fill=1, font=self.font)
+            draw.text((34, 54), 'listening', fill=1, font=self.font)
             self._show(img)
             time.sleep(0.07)
 
@@ -329,6 +328,7 @@ class OledUI:
             draw = ImageDraw.Draw(img)
             self._draw_eyes(draw, lid_top=lerp(0, 0.35, t),
                            brow_furrow=t > 0.4)
+            draw.text((36, 54), 'thinking', fill=1, font=self.font)
             self._show(img)
             time.sleep(0.03)
 
@@ -345,9 +345,7 @@ class OledUI:
             img = self._frame()
             draw = ImageDraw.Draw(img)
             self._draw_eyes(draw, lid_top=0.3, brow_furrow=True)
-            n = int(phase * 2) % 4
-            dots = ['·   ', ' ·  ', '  · ', '   ·']
-            draw.text((46, 56), dots[n], fill=1, font=self.font)
+            draw.text((36, 54), 'thinking', fill=1, font=self.font)
             self._show(img)
             time.sleep(0.07)
 
@@ -362,6 +360,7 @@ class OledUI:
             draw = ImageDraw.Draw(img)
             self._draw_eyes(draw, lid_top=lerp(0.3, 0.05, t),
                            lid_bot=lerp(0, 0.1, t))
+            draw.text((36, 54), 'speaking', fill=1, font=self.font)
             self._show(img)
             time.sleep(0.03)
 
@@ -379,6 +378,7 @@ class OledUI:
             happy = math.sin(phase) > 0.6
             self._draw_eyes(draw, lid_bot=0.15 if happy else 0.08,
                            happy=happy)
+            draw.text((36, 54), 'speaking', fill=1, font=self.font)
             self._show(img)
             time.sleep(0.07)
 
@@ -466,7 +466,7 @@ class OledUI:
         img = self._frame()
         draw = ImageDraw.Draw(img)
         self._draw_eyes(draw, wide=True, brow_raise=0.9)
-        draw.text((56, 56), '!', fill=1, font=self.font)
+        draw.text((32, 54), 'capturing', fill=1, font=self.font)
         self._show(img)
 
     def eyes_sleepy(self):
