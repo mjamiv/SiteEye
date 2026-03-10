@@ -325,28 +325,20 @@ class Molt:
         try:
             self.ui.listening()
 
-            # Snap photo at recording start (parallel with mic)
-            print('Recording + capturing...')
-            snap_t, snap_r = do_snap_async()
+            # Record audio only — camera button is separate
+            print('Recording...')
             self._stop_ev.clear()
-            rec_start = time.time()
             raw = do_record(MAX_REC, self._stop_ev)
-            rec_dur = time.time() - rec_start
-
-            # Collect photo
-            snap_t.join(timeout=3)
-            if snap_r[0]:
-                photos.append(snap_r[0])
 
             # Boost audio
             b = do_boost(raw)
             os.unlink(raw)
 
             self.ui.thinking()
-            print('Sending to proxy (all-in-one)...')
+            print('Sending to proxy...')
 
-            # ONE request to proxy: audio + photo → STT + AI + TTS all server-side
-            result = do_voice_all(b, photos[0] if photos else None)
+            # ONE request to proxy: audio → STT + AI + TTS all server-side
+            result = do_voice_all(b, None)
             os.unlink(b)
 
             txt = result.get('transcription', '')
