@@ -2,6 +2,7 @@
 import os
 import base64
 import tempfile
+import time
 from datetime import datetime
 import requests
 from flask import Flask, request, jsonify, send_file
@@ -9,10 +10,35 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
+# Conversation memory — persists across button presses
+conversation_history = []
+HISTORY_MAX = 20          # keep last 20 exchanges (10 back-and-forth)
+HISTORY_TIMEOUT = 300     # clear after 5 min silence
+last_interaction = 0.0
+
+
+def history_append(role, content):
+    """Add a message to history, trimming old entries and resetting timeout."""
+    global last_interaction
+    now = time.time()
+    if now - last_interaction > HISTORY_TIMEOUT and last_interaction > 0:
+        conversation_history.clear()
+    last_interaction = now
+    conversation_history.append({"role": role, "content": content})
+    # Trim to max
+    while len(conversation_history) > HISTORY_MAX:
+        conversation_history.pop(0)
+
+
+def get_history_messages(system_prompt):
+    """Build messages list with system prompt + conversation history."""
+    return [{"role": "system", "content": system_prompt}] + list(conversation_history)
+
 whisper_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 OPENCLAW_URL = "http://127.0.0.1:18790/v1/chat/completions"
 OPENCLAW_TOKEN = "UcsOZwuOfl1q+63vHJBrXvdmsevyW3VR6PJpbLQkgFM="
+DEVICE_MODEL = "anthropic/claude-sonnet-4-6"  # main device model
 
 DEVICE_SYSTEM = """You are Molt — Michael's AI on his wearable device. Spoken aloud through earphones.
 
@@ -113,20 +139,19 @@ def chat():
         return jsonify({"error": "No text"}), 400
 
     try:
+        history_append("user", text)
         resp = requests.post(
             OPENCLAW_URL,
             headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
             json={
-                "model": "anthropic/claude-sonnet-4-6",
-                "messages": [
-                    {"role": "system", "content": DEVICE_SYSTEM},
-                    {"role": "user", "content": text},
-                ]
+                "model": DEVICE_MODEL,
+                "messages": get_history_messages(DEVICE_SYSTEM),
             },
             timeout=60,
         )
         if resp.status_code == 200:
             assistant_text = resp.json()["choices"][0]["message"]["content"]
+            history_append("assistant", assistant_text)
         else:
             assistant_text = f"Gateway error {resp.status_code}"
     except requests.exceptions.Timeout:
@@ -308,22 +333,23 @@ def voice_all():
                 timeout=60,
             )
         else:
-            # Text-only query — no photo sent to model
+            # Text-only query — use conversation history
+            history_append("user", transcription)
             resp = requests.post(
                 OPENCLAW_URL,
                 headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
                 json={
-                    "model": "anthropic/claude-sonnet-4-6",
+                    "model": DEVICE_MODEL,
                     "max_tokens": 120,
-                    "messages": [
-                        {"role": "system", "content": DEVICE_SYSTEM},
-                        {"role": "user", "content": transcription},
-                    ]
+                    "messages": get_history_messages(DEVICE_SYSTEM),
                 },
                 timeout=60,
             )
         if resp.status_code == 200:
             assistant_text = resp.json()["choices"][0]["message"]["content"]
+            # Save assistant response to history (text-only path)
+            if not (needs_vision and img_b64):
+                history_append("assistant", assistant_text)
         else:
             assistant_text = f"Gateway error {resp.status_code}"
     except requests.exceptions.Timeout:

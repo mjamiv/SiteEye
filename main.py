@@ -311,8 +311,8 @@ def do_tg_photo(path, cap=''):
 class Molt:
     def __init__(self):
         self.ui = Eyes()
-        self.b1 = Button(BTN_VOICE, pull_up=True, bounce_time=0.2)
-        self.b2 = Button(BTN_CAMERA, pull_up=True, bounce_time=0.2)
+        self.b1 = Button(BTN_VOICE, pull_up=True, bounce_time=0.5)
+        self.b2 = Button(BTN_CAMERA, pull_up=True, bounce_time=0.5)
         self._busy = False
         self._recording = False
         self._stop_ev = threading.Event()
@@ -434,7 +434,7 @@ class Molt:
         if self._recording:
             self._stop_ev.set()
             self._recording = False
-        else:
+        elif not self._busy:
             self._recording = True
             threading.Thread(target=self.voice_flow, daemon=True).start()
 
