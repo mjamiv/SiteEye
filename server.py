@@ -271,18 +271,26 @@ def voice_all():
     if not transcription.strip():
         return jsonify({"transcription": "", "response": "", "audio": None})
 
-    # 2. Chat/Vision via OpenClaw gateway (server-side, localhost)
-    img_content = None
+    # 2. Decide if photo is needed based on what the user said
+    VISION_TRIGGERS = [
+        'see', 'look', 'photo', 'picture', 'image', 'camera',
+        'what is this', 'what\'s this', 'what am i', 'who is',
+        'who am i', 'read', 'identify', 'recognize', 'describe',
+        'in front of', 'looking at', 'show', 'scan', 'inspect',
+        'check this', 'what color', 'how many', 'what type',
+        'what kind', 'label', 'sign', 'text on',
+    ]
+    text_lower = transcription.lower()
+    needs_vision = any(t in text_lower for t in VISION_TRIGGERS)
+
+    img_b64 = None
     if "image" in request.files:
         img_bytes = request.files["image"].read()
         img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-        img_content = [
-            {"type": "text", "text": transcription},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-        ]
 
     try:
-        if img_content:
+        if needs_vision and img_b64:
+            # Vision query — include the photo
             resp = requests.post(
                 OPENCLAW_URL,
                 headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
@@ -291,12 +299,16 @@ def voice_all():
                     "max_tokens": 120,
                     "messages": [
                         {"role": "system", "content": VISION_SYSTEM},
-                        {"role": "user", "content": img_content}
+                        {"role": "user", "content": [
+                            {"type": "text", "text": transcription},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                        ]}
                     ]
                 },
                 timeout=60,
             )
         else:
+            # Text-only query — no photo sent to model
             resp = requests.post(
                 OPENCLAW_URL,
                 headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
