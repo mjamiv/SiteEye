@@ -227,10 +227,65 @@ De-esses sibilance, adds warmth. Tuned for small speaker output.
 
 ---
 
+---
+
+## Case Design — 3D Printed Wearable Enclosure
+
+SiteEye ships in a custom-designed 3D printed badge-sized enclosure. Full design docs, OpenSCAD source, and STL exports are in [`case-design/`](case-design/).
+
+### v6 Enclosure (Current)
+
+![SiteEye Front Shell Preview](case-design/front-preview-siteeye.png)
+
+**Form factor:** 58 × 82 × 34mm — badge-sized, lanyard-worn at chest level.
+
+- **Two-piece snap-fit** — front shell (camera side) + back shell (OLED side), clip together at 4 corners
+- **Camera faces forward** — IMX500 on the front shell, sees what you see
+- **OLED faces you** — 1.3" display on the back shell, readable by glancing down
+- **Single inset lanyard loop** at top — breakaway clasp for construction site safety
+- **Integrated component cradles** — 36mm speaker cradle, 14mm mic cradle, Pi Zero 2W standoff pattern
+- **PETG (black)** — heat/impact resistant, professional look, ~22g filament per enclosure
+
+The v6 design addresses 13 issues from prototype review: corrected OLED mounts, dedicated mic vent, speaker cradle, bottom USB access, right-reading labels, and full interior clearance for all components including PiSugar battery.
+
+### Build Photos
+
+| Photo | Description |
+|-------|-------------|
+| ![](build-photos/IMG_1145.PNG) | Assembly overview |
+| ![](build-photos/IMG_1146.PNG) | Front shell detail |
+| ![](build-photos/IMG_1147.PNG) | Internal components |
+| ![](build-photos/IMG_1149.PNG) | Camera mount |
+| ![](build-photos/IMG_1150.PNG) | OLED side |
+| ![](build-photos/IMG_1151.PNG) | Assembled unit |
+| ![](build-photos/IMG_1152.PNG) | Worn on lanyard |
+| ![](build-photos/IMG_1153.PNG) | Side profile |
+
+→ **[Full case design docs, STL files, and printing instructions](case-design/README.md)**
+
+---
+
+## Hardware Status
+
+| Component | Status |
+|-----------|--------|
+| Pi Zero 2W | ✅ Working |
+| IMX500 AI Camera | ✅ Working |
+| 1.3" OLED (SH1106) | ⚠️ Broken (hardware fault) |
+| INMP441 Mic + MAX98357A Amp | ✅ Working |
+| PUI Audio Speaker | ✅ Working |
+| PiSugar 3 + 1200mAh LiPo | ✅ Working |
+| Tactile Buttons (×2) | 🔲 Pending wiring |
+| 3D Printed Enclosure (v6) | ✅ Designed, printing |
+| NeoPixel RGB LED | 🔲 Not purchased |
+
+---
+
 ## Known Issues & TODO
+- [ ] OLED broken — replacement needed
 - [ ] NeoPixel LED not purchased/wired
+- [ ] Buttons pending wiring to GPIO 17/27
 - [ ] OLED sometimes needs `sudo killall python3` before restart (GPIO not released)
-- [ ] Custom enclosure design pending
 - [ ] BLE 5.0 mesh networking (nRF52840 DNP on PCB for v1)
 
 ---
