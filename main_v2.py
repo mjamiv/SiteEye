@@ -564,11 +564,24 @@ class SiteEye:
         log("\u2550\u2550\u2550 SiteEye v2 \u2014 Whisplay + IMX500 \u2550\u2550\u2550")
         log(f"Proxy: {PROXY_URL}")
 
-        # Boot animation
+        # Boot animation — chime plays during progress bar phase
         self.ui.set_state(STATE_BOOT)
-        for _ in range(BOOT_FRAMES):
+        chime_played = False
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        for i in range(BOOT_FRAMES):
             frame_start = time.time()
             self.ui.render_frame()
+
+            # Play chime at frame 8 (when progress bar appears)
+            if i == 8 and not chime_played:
+                chime_path = os.path.join(base_dir, "assets", "chime.wav")
+                if os.path.exists(chime_path):
+                    threading.Thread(target=lambda: subprocess.run(
+                        ["aplay", "-D", AUDIO_DEV, chime_path],
+                        capture_output=True, timeout=10
+                    ), daemon=True).start()
+                    chime_played = True
+
             elapsed = time.time() - frame_start
             if FRAME_INTERVAL - elapsed > 0:
                 time.sleep(FRAME_INTERVAL - elapsed)
@@ -588,16 +601,14 @@ class SiteEye:
 
         self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
 
-        # Startup audio: chime → voice announcement
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        for sound in ["assets/chime.wav", "assets/startup.wav"]:
-            sound_path = os.path.join(base_dir, sound)
-            if os.path.exists(sound_path):
-                try:
-                    subprocess.run(["aplay", "-D", AUDIO_DEV, sound_path],
-                                   capture_output=True, timeout=10)
-                except Exception:
-                    pass
+        # Voice announcement (chime already played during boot)
+        startup_wav = os.path.join(base_dir, "assets", "startup.wav")
+        if os.path.exists(startup_wav):
+            try:
+                subprocess.run(["aplay", "-D", AUDIO_DEV, startup_wav],
+                               capture_output=True, timeout=10)
+            except Exception:
+                pass
         log("\U0001f50a Startup audio played")
 
         # Start display loop
