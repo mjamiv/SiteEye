@@ -68,11 +68,11 @@ class SiteEye:
 
         # Audio feedback files
         self._base_dir = os.path.dirname(os.path.abspath(__file__))
+        self._press_time = 0
         self._held_long = False
         self._press_id = 0
-        self._last_release_time = 0  # for double-tap detection
         self._tap_count = 0
-        self._tap_timer = None
+        self._dispatch_timer = None  # threading.Timer for delayed dispatch
 
         # Register button callbacks
         self.board.button_press_callback = self._on_button_press
@@ -176,13 +176,13 @@ class SiteEye:
             ), daemon=True).start()
 
     def _on_button_press(self):
-        """Button pressed — immediate feedback + hold detection."""
+        """Button pressed."""
         self._press_time = time.time()
         self._held_long = False
         self._press_id += 1
         current_id = self._press_id
 
-        # During recording, any press = stop recording
+        # During recording, any press = stop
         if self._recording:
             self._play_feedback("click.wav")
             self._stop_recording()
@@ -191,15 +191,17 @@ class SiteEye:
         if self._busy:
             return
 
-        # Immediate feedback
         self._play_feedback("click.wav")
-        self.ui.set_status("Hold=Camera | Release=Voice")
 
-        # Background timer: if still held after threshold, switch to camera mode
+        # Cancel any pending single-tap dispatch
+        if self._dispatch_timer and self._dispatch_timer.is_alive():
+            self._dispatch_timer.cancel()
+            self._dispatch_timer = None
+
+        # Hold detection — runs in background
         def _check_hold():
             time.sleep(BUTTON_HOLD_THRESHOLD)
-            # Only fire if this is still the same press (not stale)
-            if current_id == self._press_id and not self._busy and not self._recording:
+            if current_id == self._press_id and not self._busy:
                 self._held_long = True
                 self._play_feedback("camera_beep.wav")
                 self.ui.set_status("Release to capture")
@@ -207,43 +209,42 @@ class SiteEye:
         threading.Thread(target=_check_hold, daemon=True).start()
 
     def _on_button_release(self):
-        """Button released — dispatch voice, camera, or double-tap info."""
+        """Button released — route to voice, camera, or info."""
         if self._busy or self._recording:
             return
 
         duration = time.time() - self._press_time
         if duration < 0.05:
-            return  # Debounce
+            return
 
-        # Long hold = camera (already detected)
+        # Long press = camera
         if self._held_long or duration > BUTTON_HOLD_THRESHOLD:
             self._tap_count = 0
             threading.Thread(target=self._camera_flow, daemon=True).start()
             return
 
-        # Short tap — check for double-tap
-        now = time.time()
-        if now - self._last_release_time < DOUBLE_TAP_WINDOW:
-            # Double tap detected!
-            self._tap_count = 0
-            self._last_release_time = 0
-            if self._tap_timer:
-                self._tap_count = 0  # cancel pending single-tap
-            threading.Thread(target=self._info_screen, daemon=True).start()
-            return
+        # Short tap — count it
+        self._tap_count += 1
 
-        self._last_release_time = now
-        self._tap_count = 1
-
-        # Wait briefly to see if a second tap comes
-        def _delayed_voice():
-            time.sleep(DOUBLE_TAP_WINDOW + 0.05)
-            if self._tap_count == 1 and not self._busy:
+        if self._tap_count == 1:
+            # First tap — wait to see if second comes
+            def _dispatch():
+                if self._tap_count == 1 and not self._busy:
+                    self._tap_count = 0
+                    self._voice_flow()
                 self._tap_count = 0
-                self._voice_flow()
 
-        self._tap_timer = threading.Thread(target=_delayed_voice, daemon=True)
-        self._tap_timer.start()
+            self._dispatch_timer = threading.Timer(DOUBLE_TAP_WINDOW, _dispatch)
+            self._dispatch_timer.daemon = True
+            self._dispatch_timer.start()
+
+        elif self._tap_count >= 2:
+            # Double tap — cancel pending voice dispatch
+            self._tap_count = 0
+            if self._dispatch_timer:
+                self._dispatch_timer.cancel()
+                self._dispatch_timer = None
+            threading.Thread(target=self._info_screen, daemon=True).start()
 
     def _voice_flow(self):
         """Full voice pipeline: record → proxy → TTS → speaker."""
