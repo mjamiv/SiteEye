@@ -193,7 +193,7 @@ class SiteEye:
 
         # Immediate feedback
         self._play_feedback("click.wav")
-        self.ui.set_status("Hold → Camera  |  Release → Voice")
+        self.ui.set_status("Hold=Camera | Release=Voice")
 
         # Background timer: if still held after threshold, switch to camera mode
         def _check_hold():
@@ -202,7 +202,7 @@ class SiteEye:
             if current_id == self._press_id and not self._busy and not self._recording:
                 self._held_long = True
                 self._play_feedback("camera_beep.wav")
-                self.ui.set_status("📷 Release to capture")
+                self.ui.set_status("Release to capture")
 
         threading.Thread(target=_check_hold, daemon=True).start()
 

@@ -696,8 +696,8 @@ class LcdUI:
     def _draw_idle_hint(self, draw):
         """Show button usage hint at bottom when idle."""
         hints = [
-            "Tap → Voice",
-            "Hold → Camera",
+            "Tap = Voice",
+            "Hold = Camera",
         ]
         idx = int(time.time() / 4) % len(hints)
         hint = hints[idx]
