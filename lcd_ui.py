@@ -23,6 +23,13 @@ from WhisPlay import WhisPlayBoard
 # Display constants
 WIDTH = 240
 HEIGHT = 280
+# Whisplay LCD has 20px rounded corners top and bottom.
+# Safe zone: avoid placing content in the corner triangles.
+CORNER_H = 20  # corner chamfer height in px
+SAFE_TOP = CORNER_H + 2  # safe y for text at top
+SAFE_BOT = HEIGHT - CORNER_H - 2  # safe y for text at bottom
+SAFE_LEFT = 12  # inset from left edge near corners
+SAFE_RIGHT = WIDTH - 12
 
 # Colors
 BG = (10, 10, 26)
@@ -40,15 +47,15 @@ MOUTH_COLOR = (220, 220, 240)
 MOUTH_INSIDE = (40, 20, 60)
 BROW_COLOR = (200, 200, 220)
 
-# Face geometry
-EYE_Y = 95
+# Face geometry — centered on full 240×280 display
+EYE_Y = 105  # vertical center for eyes (shifted down to clear top chamfer)
 LEFT_EYE_X = 72
 RIGHT_EYE_X = 168
-EYE_W = 36
-EYE_H = 30
-PUPIL_R = 10
-CORNER_R = 9
-MOUTH_Y = 148
+EYE_W = 38  # slightly wider for bigger screen presence
+EYE_H = 32
+PUPIL_R = 11
+CORNER_R = 10
+MOUTH_Y = 160  # mouth below eyes
 MOUTH_CX = 120
 
 # States
@@ -256,9 +263,9 @@ class LcdUI:
 
         self._update_animation()
 
-        # Status bar
+        # Status bar — inside safe zone (below top chamfer)
         if status:
-            draw.text((5, 3), status, fill=TEXT_DIM, font=self._font_sm)
+            draw.text((SAFE_LEFT + 4, SAFE_TOP), status, fill=TEXT_DIM, font=self._font_sm)
 
         if state == STATE_BOOT:
             self._draw_boot(draw)
@@ -284,15 +291,15 @@ class LcdUI:
             # --- MOUTH ---
             self._draw_mouth(draw)
 
-            # --- State indicators ---
+            # --- State indicators (below mouth) ---
             if state == STATE_LISTENING:
                 self._draw_listening_indicator(draw)
             elif state == STATE_THINKING:
                 self._draw_thinking_indicator(draw)
 
-        # Response text area
+        # Response text area — between mouth and bottom mode bar
         if resp and state not in (STATE_BOOT, STATE_CAMERA):
-            self._draw_wrapped_text(draw, resp, 8, 180, WIDTH - 16, self._font_md, TEXT_PRIMARY)
+            self._draw_wrapped_text(draw, resp, SAFE_LEFT, 185, SAFE_RIGHT - SAFE_LEFT, self._font_md, TEXT_PRIMARY)
 
         # Mode bar at bottom
         self._draw_mode_bar(draw, state)
@@ -422,7 +429,7 @@ class LcdUI:
 
     def _draw_listening_indicator(self, draw):
         """Audio level visualization for listening state."""
-        y = 168
+        y = 178
         frame = self._anim_frame
         # Pulsing bars like an audio meter
         for i in range(7):
@@ -434,7 +441,7 @@ class LcdUI:
 
     def _draw_thinking_indicator(self, draw):
         """Animated thinking dots."""
-        y = 168
+        y = 178
         frame = self._anim_frame
         active = (frame // 6) % 3
         for i in range(3):
@@ -456,13 +463,13 @@ class LcdUI:
         text_c = tuple(int(v * alpha) for v in HIGHLIGHT)
         sub_c = tuple(int(v * alpha) for v in TEXT_DIM)
 
-        draw.text((55, 90), "SiteEye", fill=text_c, font=self._font_lg)
-        draw.text((90, 125), "v2.0", fill=sub_c, font=self._font_sub)
+        draw.text((55, 100), "SiteEye", fill=text_c, font=self._font_lg)
+        draw.text((90, 135), "v2.0", fill=sub_c, font=self._font_sub)
 
         # Loading bar
-        bar_w = 120
+        bar_w = 140
         bar_x = (WIDTH - bar_w) // 2
-        bar_y = 170
+        bar_y = 178
         progress = min(1.0, frame / 20.0)
         draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + 6],
                                 radius=3, fill=(30, 30, 50))
@@ -471,7 +478,7 @@ class LcdUI:
             draw.rounded_rectangle([bar_x, bar_y, bar_x + fill_w, bar_y + 6],
                                     radius=3, fill=HIGHLIGHT)
 
-        draw.text((72, 195), "Booting...", fill=sub_c, font=self._font_sub)
+        draw.text((72, 205), "Booting...", fill=sub_c, font=self._font_sub)
 
     def _draw_camera_screen(self, draw):
         """Camera capture screen with countdown feel."""
@@ -482,15 +489,13 @@ class LcdUI:
             draw.rectangle([0, 0, WIDTH, HEIGHT], fill=(255, 255, 255))
             return
 
-        # Camera icon
-        # Lens circle
-        draw.ellipse([85, 70, 155, 140], outline=HIGHLIGHT, width=3)
-        draw.ellipse([100, 85, 140, 125], outline=(80, 80, 120), width=2)
-        draw.ellipse([110, 95, 130, 115], fill=(40, 40, 80))
-        # Dot in center
-        draw.ellipse([117, 102, 123, 108], fill=HIGHLIGHT)
+        # Camera icon — centered on full display
+        draw.ellipse([80, 80, 160, 160], outline=HIGHLIGHT, width=3)
+        draw.ellipse([98, 98, 142, 142], outline=(80, 80, 120), width=2)
+        draw.ellipse([110, 110, 130, 130], fill=(40, 40, 80))
+        draw.ellipse([117, 117, 123, 123], fill=HIGHLIGHT)
 
-        draw.text((75, 155), "Capturing...", fill=TEXT_PRIMARY, font=self._font_sub)
+        draw.text((70, 175), "Capturing...", fill=TEXT_PRIMARY, font=self._font_sub)
 
     def _draw_mode_bar(self, draw, state):
         """Bottom mode indicator."""
@@ -505,7 +510,7 @@ class LcdUI:
         }
         text, color = mode_map.get(state, ("", TEXT_DIM))
         if text:
-            draw.text((8, HEIGHT - 18), text, fill=color, font=self._font_sm)
+            draw.text((SAFE_LEFT + 4, SAFE_BOT - 4), text, fill=color, font=self._font_sm)
 
     def _draw_wrapped_text(self, draw, text, x, y, max_w, font, color):
         """Word-wrap text in the lower area."""
