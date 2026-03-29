@@ -384,6 +384,16 @@ class SiteEye:
 
         self.ui.set_state(STATE_IDLE)
 
+        # Startup sound
+        startup_wav = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "startup.wav")
+        if os.path.exists(startup_wav):
+            try:
+                subprocess.run(["aplay", "-D", AUDIO_DEV, startup_wav],
+                               capture_output=True, timeout=10)
+                log("🔊 Startup sound played")
+            except:
+                pass
+
         # Start display loop
         display_thread = threading.Thread(target=self._display_loop, daemon=True)
         display_thread.start()
