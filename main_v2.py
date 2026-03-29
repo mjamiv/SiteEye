@@ -76,9 +76,13 @@ class SiteEye:
                            capture_output=True, timeout=5)
             subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Speaker DC Volume", "5"],
                            capture_output=True, timeout=5)
+            subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Playback", "100%"],
+                           capture_output=True, timeout=5)
+            subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Headphone", "100%"],
+                           capture_output=True, timeout=5)
             subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Capture", "80%"],
                            capture_output=True, timeout=5)
-            log("Speaker volume set to max")
+            log("All volume controls maxed")
         except Exception:
             pass
 
@@ -370,15 +374,17 @@ class SiteEye:
 
         self.ui.set_state(STATE_IDLE)
 
-        # Startup sound
-        startup_wav = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "startup.wav")
-        if os.path.exists(startup_wav):
-            try:
-                subprocess.run(["aplay", "-D", AUDIO_DEV, startup_wav],
-                               capture_output=True, timeout=10)
-                log("\U0001f50a Startup sound played")
-            except Exception:
-                pass
+        # Startup audio: chime → voice announcement
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        for sound in ["assets/chime.wav", "assets/startup.wav"]:
+            sound_path = os.path.join(base_dir, sound)
+            if os.path.exists(sound_path):
+                try:
+                    subprocess.run(["aplay", "-D", AUDIO_DEV, sound_path],
+                                   capture_output=True, timeout=10)
+                except Exception:
+                    pass
+        log("\U0001f50a Startup audio played")
 
         # Start display loop
         display_thread = threading.Thread(target=self._display_loop, daemon=True)

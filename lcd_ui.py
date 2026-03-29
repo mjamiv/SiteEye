@@ -113,8 +113,8 @@ class LcdUI:
             self._font_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
             self._font_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
             self._font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
-            self._font_mono = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 28)
-            self._font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 10)
+            self._font_mono = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 38)
+            self._font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
             self._font_check = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 11)
         except Exception:
             self._font_sm = ImageFont.load_default()
@@ -335,7 +335,7 @@ class LcdUI:
             bbox = draw.textbbox((0, 0), text, font=self._font_mono)
             tw = bbox[2] - bbox[0]
             tx = (WIDTH - tw) // 2
-            draw.text((tx, 110), text, fill=c, font=self._font_mono)
+            draw.text((tx, 95), text, fill=c, font=self._font_mono)
 
         # Phase 2 (frames 6-15): Title stays + progress bar fills
         elif frame <= 15:
@@ -344,13 +344,13 @@ class LcdUI:
             bbox = draw.textbbox((0, 0), text, font=self._font_mono)
             tw = bbox[2] - bbox[0]
             tx = (WIDTH - tw) // 2
-            draw.text((tx, 110), text, fill=TEXT_PRIMARY, font=self._font_mono)
+            draw.text((tx, 95), text, fill=TEXT_PRIMARY, font=self._font_mono)
 
             # Progress bar
             bar_w = 160
             bar_h = 3
             bar_x = (WIDTH - bar_w) // 2
-            bar_y = 148
+            bar_y = 145
             progress = (frame - 5) / 10.0
             # Bar track
             draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
@@ -368,13 +368,13 @@ class LcdUI:
             bbox = draw.textbbox((0, 0), text, font=self._font_mono)
             tw = bbox[2] - bbox[0]
             tx = (WIDTH - tw) // 2
-            draw.text((tx, 110), text, fill=TEXT_PRIMARY, font=self._font_mono)
+            draw.text((tx, 95), text, fill=TEXT_PRIMARY, font=self._font_mono)
 
             # Full progress bar
             bar_w = 160
             bar_h = 3
             bar_x = (WIDTH - bar_w) // 2
-            bar_y = 148
+            bar_y = 145
             draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
                                    radius=1, fill=ACCENT)
 
@@ -385,7 +385,7 @@ class LcdUI:
             bbox2 = draw.textbbox((0, 0), sub_text, font=self._font_sub)
             sw = bbox2[2] - bbox2[0]
             sx = (WIDTH - sw) // 2
-            draw.text((sx, 158), sub_text, fill=sub_c, font=self._font_sub)
+            draw.text((sx, 160), sub_text, fill=sub_c, font=self._font_sub)
 
         # Phase 4 (frames 26-40): System checks appear sequentially
         else:
@@ -394,13 +394,13 @@ class LcdUI:
             bbox = draw.textbbox((0, 0), text, font=self._font_mono)
             tw = bbox[2] - bbox[0]
             tx = (WIDTH - tw) // 2
-            draw.text((tx, 110), text, fill=TEXT_PRIMARY, font=self._font_mono)
+            draw.text((tx, 95), text, fill=TEXT_PRIMARY, font=self._font_mono)
 
             # Full progress bar
             bar_w = 160
             bar_h = 3
             bar_x = (WIDTH - bar_w) // 2
-            bar_y = 148
+            bar_y = 145
             draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
                                    radius=1, fill=ACCENT)
 
@@ -409,7 +409,7 @@ class LcdUI:
             bbox2 = draw.textbbox((0, 0), sub_text, font=self._font_sub)
             sw = bbox2[2] - bbox2[0]
             sx = (WIDTH - sw) // 2
-            draw.text((sx, 158), sub_text, fill=TEXT_DIM, font=self._font_sub)
+            draw.text((sx, 160), sub_text, fill=TEXT_DIM, font=self._font_sub)
 
             # System checks (each appears 3 frames apart)
             checks = [
