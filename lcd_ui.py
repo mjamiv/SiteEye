@@ -616,6 +616,49 @@ class LcdUI:
                     px.extend([(rgb565 >> 8) & 0xFF, rgb565 & 0xFF])
             self.board.draw_image(0, 0, WIDTH, HEIGHT, px)
 
+    def show_captured_image(self, img_path):
+        """Display a captured photo on the LCD while analyzing."""
+        try:
+            from PIL import Image as PILImage
+            photo = PILImage.open(img_path).convert('RGB')
+            # Fit into display area (above text zone)
+            # Scale to fill width, crop to fit height
+            display_h = 180  # leave room for text below
+            photo_ratio = photo.width / photo.height
+            display_ratio = WIDTH / display_h
+            if photo_ratio > display_ratio:
+                # Wider than display — fit height, crop width
+                new_h = display_h
+                new_w = int(display_h * photo_ratio)
+            else:
+                # Taller — fit width, crop height
+                new_w = WIDTH
+                new_h = int(WIDTH / photo_ratio)
+            photo = photo.resize((new_w, new_h), PILImage.LANCZOS)
+            # Center crop
+            left = (new_w - WIDTH) // 2
+            top = (new_h - display_h) // 2
+            photo = photo.crop((left, top, left + WIDTH, top + display_h))
+
+            # Compose onto black frame
+            img = Image.new('RGB', (WIDTH, HEIGHT), BG)
+            img.paste(photo, (0, 0))
+
+            # "Analyzing..." text at bottom
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([0, display_h, WIDTH, HEIGHT], fill=BG)
+            draw.text((SAFE_LEFT + 4, display_h + 10), "Analyzing...", fill=TEXT_DIM, font=self._font_md)
+
+            # Thin border around photo
+            draw.rectangle([0, 0, WIDTH - 1, display_h - 1], outline=(40, 60, 80), width=1)
+
+            self._send_to_display(img)
+            # Force update the buffer so it doesn't get skipped
+            self._last_buf = None
+        except Exception as e:
+            # If image display fails, just show the camera state
+            pass
+
     def cleanup(self):
         """Turn off display and LED."""
         self._running = False

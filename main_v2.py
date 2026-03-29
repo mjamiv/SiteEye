@@ -212,7 +212,9 @@ class SiteEye:
             self._busy = False
             return
 
-        self.ui.set_state(STATE_THINKING, "Analyzing image...")
+        # Show captured image on LCD while analyzing
+        self.ui.show_captured_image(img_path)
+        self.ui.set_status("Analyzing...")
         log("🔄 Sending to proxy for vision...")
 
         try:
@@ -228,36 +230,14 @@ class SiteEye:
                 log(f"🤖 {response}")
                 self.ui.set_state(STATE_SPEAKING, response)
 
-                # Use /voice_all with dummy silent audio to get TTS back
-                # This is more reliable than /tts endpoint
+                # /tts returns raw WAV bytes, not JSON
                 try:
-                    # Create a minimal silent WAV for the proxy
-                    import struct, io
-                    silent = io.BytesIO()
-                    # WAV header for 0.1s of silence at 16kHz mono S16_LE
-                    n_samples = 1600
-                    data_size = n_samples * 2
-                    silent.write(b'RIFF')
-                    silent.write(struct.pack('<I', 36 + data_size))
-                    silent.write(b'WAVEfmt ')
-                    silent.write(struct.pack('<IHHIIHH', 16, 1, 1, 16000, 32000, 2, 16))
-                    silent.write(b'data')
-                    silent.write(struct.pack('<I', data_size))
-                    silent.write(b'\x00' * data_size)
-                    silent.seek(0)
-
-                    # Use /tts endpoint directly with response text
                     tts_r = requests.post(f"{PROXY_URL}/tts",
                         json={"text": response}, timeout=60)
-                    if tts_r.status_code == 200:
-                        tts_data = tts_r.json()
-                        if tts_data.get("audio"):
-                            self._play_audio_b64(tts_data["audio"])
-                        else:
-                            log("⚠️ TTS returned no audio")
-                            time.sleep(3)
+                    if tts_r.status_code == 200 and len(tts_r.content) > 100:
+                        self._play_audio_raw(tts_r.content)
                     else:
-                        log(f"⚠️ TTS error: {tts_r.status_code}")
+                        log(f"⚠️ TTS error: status={tts_r.status_code} len={len(tts_r.content)}")
                         time.sleep(3)
                 except Exception as e:
                     log(f"⚠️ TTS failed: {e}")
@@ -309,8 +289,16 @@ class SiteEye:
         self._record_proc = None
 
     def _play_audio_b64(self, audio_b64):
+        """Play base64-encoded WAV audio."""
         try:
             audio_bytes = base64.b64decode(audio_b64)
+            self._play_audio_raw(audio_bytes)
+        except Exception as e:
+            log(f"Playback error: {e}")
+
+    def _play_audio_raw(self, audio_bytes):
+        """Play raw WAV bytes through speaker."""
+        try:
             tmp_path = "/tmp/siteeye_tts.wav"
             with open(tmp_path, "wb") as f:
                 f.write(audio_bytes)
