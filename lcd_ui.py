@@ -78,6 +78,10 @@ class LcdUI:
         self.status_text = ""
         self._running = True
 
+        # Photo overlay state
+        self._photo_img = None  # PIL Image of captured photo, held during camera flow
+        self._photo_text = ""   # Text to show below photo
+
         # Animation state
         self._blink_amount = 0.0
         self._next_blink = time.time() + random.uniform(2, 5)
@@ -252,6 +256,11 @@ class LcdUI:
 
     def render_frame(self):
         """Render one frame and push to display."""
+        # If we have a photo to display, render photo mode instead of face
+        if self._photo_img is not None:
+            self._render_photo_frame()
+            return
+
         img = Image.new('RGB', (WIDTH, HEIGHT), BG)
         draw = ImageDraw.Draw(img)
 
@@ -264,7 +273,7 @@ class LcdUI:
         self._update_animation()
 
         # Status bar — inside safe zone (below top chamfer)
-        if status:
+        if status and not resp:
             draw.text((SAFE_LEFT + 4, SAFE_TOP), status, fill=TEXT_DIM, font=self._font_sm)
 
         if state == STATE_BOOT:
@@ -617,47 +626,87 @@ class LcdUI:
             self.board.draw_image(0, 0, WIDTH, HEIGHT, px)
 
     def show_captured_image(self, img_path):
-        """Display a captured photo on the LCD while analyzing."""
+        """Load a captured photo and hold it on screen during analysis/response."""
         try:
             from PIL import Image as PILImage
             photo = PILImage.open(img_path).convert('RGB')
-            # Fit into display area (above text zone)
-            # Scale to fill width, crop to fit height
-            display_h = 180  # leave room for text below
+            # Scale to fill width, fit in top portion of display
+            display_h = 170  # room for text below
             photo_ratio = photo.width / photo.height
             display_ratio = WIDTH / display_h
             if photo_ratio > display_ratio:
-                # Wider than display — fit height, crop width
                 new_h = display_h
                 new_w = int(display_h * photo_ratio)
             else:
-                # Taller — fit width, crop height
                 new_w = WIDTH
                 new_h = int(WIDTH / photo_ratio)
             photo = photo.resize((new_w, new_h), PILImage.LANCZOS)
             # Center crop
             left = (new_w - WIDTH) // 2
             top = (new_h - display_h) // 2
-            photo = photo.crop((left, top, left + WIDTH, top + display_h))
-
-            # Compose onto black frame
-            img = Image.new('RGB', (WIDTH, HEIGHT), BG)
-            img.paste(photo, (0, 0))
-
-            # "Analyzing..." text at bottom
-            draw = ImageDraw.Draw(img)
-            draw.rectangle([0, display_h, WIDTH, HEIGHT], fill=BG)
-            draw.text((SAFE_LEFT + 4, display_h + 10), "Analyzing...", fill=TEXT_DIM, font=self._font_md)
-
-            # Thin border around photo
-            draw.rectangle([0, 0, WIDTH - 1, display_h - 1], outline=(40, 60, 80), width=1)
-
-            self._send_to_display(img)
-            # Force update the buffer so it doesn't get skipped
-            self._last_buf = None
+            self._photo_img = photo.crop((left, top, left + WIDTH, top + display_h))
+            self._photo_text = "Analyzing..."
+            self._last_buf = None  # Force display refresh
         except Exception as e:
-            # If image display fails, just show the camera state
             pass
+
+    def set_photo_text(self, text):
+        """Update the text shown below the photo."""
+        self._photo_text = text
+        self._last_buf = None
+
+    def clear_photo(self):
+        """Clear the photo overlay and return to face mode."""
+        self._photo_img = None
+        self._photo_text = ""
+        self._last_buf = None
+
+    def _render_photo_frame(self):
+        """Render photo + text below it. Called by render_frame when photo is set."""
+        img = Image.new('RGB', (WIDTH, HEIGHT), BG)
+
+        if self._photo_img is not None:
+            img.paste(self._photo_img, (0, 0))
+
+        draw = ImageDraw.Draw(img)
+        photo_h = 170
+
+        # Dark area below photo for text
+        draw.rectangle([0, photo_h, WIDTH, HEIGHT], fill=(6, 6, 16))
+
+        # Thin border around photo
+        draw.rectangle([0, 0, WIDTH - 1, photo_h - 1], outline=(40, 60, 80), width=1)
+
+        # Text below photo
+        text = self._photo_text
+        if text:
+            # Word wrap in the text area
+            max_w = SAFE_RIGHT - SAFE_LEFT
+            y_start = photo_h + 6
+            line_h = 16
+            max_lines = 6
+
+            words = text.split()
+            lines = []
+            line = ""
+            for w in words:
+                test = f"{line} {w}".strip()
+                bbox = draw.textbbox((0, 0), test, font=self._font_md)
+                if bbox[2] - bbox[0] > max_w:
+                    if line:
+                        lines.append(line)
+                    line = w
+                else:
+                    line = test
+            if line:
+                lines.append(line)
+
+            visible = lines[-max_lines:]
+            for i, ln in enumerate(visible):
+                draw.text((SAFE_LEFT, y_start + i * line_h), ln,
+                          fill=TEXT_PRIMARY, font=self._font_md)
+
+        self._send_to_display(img)
 
     def cleanup(self):
         """Turn off display and LED."""

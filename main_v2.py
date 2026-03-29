@@ -212,9 +212,8 @@ class SiteEye:
             self._busy = False
             return
 
-        # Show captured image on LCD while analyzing
+        # Show captured image on LCD — stays visible through entire flow
         self.ui.show_captured_image(img_path)
-        self.ui.set_status("Analyzing...")
         log("🔄 Sending to proxy for vision...")
 
         try:
@@ -228,9 +227,11 @@ class SiteEye:
                 data = r.json()
                 response = data.get("response", "No response")
                 log(f"🤖 {response}")
-                self.ui.set_state(STATE_SPEAKING, response)
 
-                # /tts returns raw WAV bytes, not JSON
+                # Show response text below the photo (photo stays visible)
+                self.ui.set_photo_text(response)
+
+                # Speak the response
                 try:
                     tts_r = requests.post(f"{PROXY_URL}/tts",
                         json={"text": response}, timeout=60)
@@ -243,17 +244,19 @@ class SiteEye:
                     log(f"⚠️ TTS failed: {e}")
                     time.sleep(3)
 
-                # Keep text visible briefly, then clear
-                time.sleep(3)
-                self.ui.response_text = ""
+                # Keep photo + text visible briefly after speech
+                time.sleep(4)
             else:
                 log(f"❌ Vision error: {r.status_code}")
-                self.ui.set_state(STATE_ERROR, "Vision failed")
-                time.sleep(2)
+                self.ui.set_photo_text(f"Error {r.status_code}")
+                time.sleep(3)
         except Exception as e:
             log(f"❌ {e}")
-            self.ui.set_state(STATE_ERROR, str(e)[:40])
-            time.sleep(2)
+            self.ui.set_photo_text(str(e)[:40])
+            time.sleep(3)
+
+        # Clear photo and return to face
+        self.ui.clear_photo()
 
         try:
             os.remove(img_path)
