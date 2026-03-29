@@ -196,11 +196,12 @@ class SiteEye:
 
         while self._live_mode and self._live_session_id:
             try:
-                # Record a short audio chunk
+                # Record a short audio chunk (0.5s for low latency)
                 tmp_raw = "/tmp/siteeye_live_chunk.raw"
+                # Use --duration in samples: 8000 samples = 0.5s at 16kHz
                 subprocess.run(
                     ["arecord", "-D", AUDIO_DEV, "-f", "S16_LE", "-r", "16000",
-                     "-c", "1", "-t", "raw", "-d", "1", tmp_raw],
+                     "-c", "1", "-t", "raw", "--samples", "8000", tmp_raw],
                     capture_output=True, timeout=5
                 )
 
