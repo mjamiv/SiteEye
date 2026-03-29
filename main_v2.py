@@ -189,12 +189,6 @@ class SiteEye:
             self._stop_recording()
             return
 
-        # During viewfinder, any press = capture
-        if hasattr(self, '_camera_shutter') and self._camera_shutter is False:
-            self._camera_shutter = True
-            self._play_feedback("click.wav")
-            return
-
         if self._busy:
             return
 
@@ -363,66 +357,20 @@ class SiteEye:
         self._busy = False
 
     def _camera_flow(self):
-        """Camera pipeline: live viewfinder → press to capture → vision → TTS."""
+        """Camera pipeline: capture → show still → vision → TTS."""
         if self._busy:
             return
         self._busy = True
 
-        log("\U0001f4f7 Camera flow — live viewfinder")
-        self.ui.set_status("Viewfinder - press to capture")
+        log("\U0001f4f7 Camera flow started")
+        self.ui.set_status("Capturing...")
+        self.ui.set_state(STATE_CAMERA)
+        self._play_feedback("click.wav")
 
-        # Live viewfinder: _camera_shutter=False means waiting, True means capture
-        self._camera_shutter = False
-        try:
-            from picamera2 import Picamera2
-            picam2 = Picamera2()
-            config = picam2.create_preview_configuration(
-                main={'size': (240, 280), 'format': 'RGB888'})
-            picam2.configure(config)
-            picam2.start()
-            time.sleep(0.3)  # Let auto-exposure settle
-
-            log("Live viewfinder active — press button to capture")
-            frame_count = 0
-            while not self._camera_shutter and self._running:
-                try:
-                    frame = picam2.capture_array()
-                    self.ui.show_live_frame(frame)
-                    frame_count += 1
-                except Exception:
-                    pass
-                time.sleep(0.08)
-                if frame_count > 375:  # 30s timeout
-                    break
-
-            # Done with viewfinder
-            self._camera_shutter = None
-
-            # Capture final still at full resolution
-            self._play_feedback("click.wav")
-            self.ui.set_status("Capturing...")
-            img_path = "/tmp/siteeye_snap.jpg"
-            picam2.switch_mode_and_capture_file(
-                picam2.create_still_configuration(), img_path)
-            picam2.stop()
-            picam2.close()
-        except Exception as e:
-            log(f"Camera error: {e}")
-            try:
-                picam2.stop()
-                picam2.close()
-            except Exception:
-                pass
+        img_path = self._capture_photo()
+        if not img_path:
+            log("\u274c Camera failed")
             self.ui.set_state(STATE_ERROR, "Camera failed")
-            self._play_feedback("error.wav")
-            time.sleep(2)
-            self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
-            self._busy = False
-            return
-
-        if not os.path.exists(img_path) or os.path.getsize(img_path) < 1000:
-            log("\u274c Capture failed")
-            self.ui.set_state(STATE_ERROR, "Capture failed")
             self._play_feedback("error.wav")
             time.sleep(2)
             self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
