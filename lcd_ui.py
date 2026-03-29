@@ -459,7 +459,7 @@ class LcdUI:
                     tc = self._fade_color(TEXT_PRIMARY, alpha)
                     cx = 65
                     ty = check_y + i * 20
-                    draw.text((cx, ty), "\u2713", fill=c, font=self._font_check)
+                    draw.text((cx, ty), "OK", fill=c, font=self._font_check)
                     draw.text((cx + 16, ty), label, fill=tc, font=self._font_check)
 
         # Phase 5 (frame 45+): auto-transition to idle
