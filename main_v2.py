@@ -20,6 +20,7 @@ import signal
 import subprocess
 import threading
 import tempfile
+import queue
 import requests
 from datetime import datetime
 
@@ -187,91 +188,175 @@ class SiteEye:
         log("⬛ Live mode ended")
 
     def _live_audio_loop(self):
-        """Background loop: stream mic → proxy → Gemini, play responses."""
-        CHUNK_DURATION = 0.5  # seconds per chunk
-        CHUNK_SAMPLES = int(16000 * CHUNK_DURATION)  # 16kHz
-        CHUNK_BYTES = CHUNK_SAMPLES * 2  # 16-bit = 2 bytes per sample
-
+        """Continuous streaming: record → send → receive → play concurrently.
+        
+        Uses persistent arecord/aplay processes instead of per-chunk subprocess calls.
+        Two threads: send_loop reads mic and POSTs to proxy, play_loop writes response audio.
+        """
         self._busy = True
+        play_queue = queue.Queue(maxsize=50)
+        error_count = [0]
 
-        while self._live_mode and self._live_session_id:
-            try:
-                # Record a short audio chunk (0.5s for low latency)
-                tmp_raw = "/tmp/siteeye_live_chunk.raw"
-                # Use --duration in samples: 8000 samples = 0.5s at 16kHz
-                subprocess.run(
-                    ["arecord", "-D", AUDIO_DEV, "-f", "S16_LE", "-r", "16000",
-                     "-c", "1", "-t", "raw", "--samples", "8000", tmp_raw],
-                    capture_output=True, timeout=5
-                )
+        # Start continuous arecord (streams raw PCM to stdout, no duration limit)
+        try:
+            record_proc = subprocess.Popen(
+                ["arecord", "-D", AUDIO_DEV, "-f", "S16_LE", "-r", "16000",
+                 "-c", "1", "-t", "raw"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            log(f"Failed to start arecord: {e}")
+            self._busy = False
+            return
 
-                if not os.path.exists(tmp_raw) or os.path.getsize(tmp_raw) < 100:
-                    continue
+        def send_loop():
+            """Read 8000-byte chunks from mic, POST to proxy, queue response audio."""
+            while self._live_mode and self._live_session_id:
+                try:
+                    # 8000 bytes = 4000 samples = 0.25s at 16kHz 16-bit mono
+                    chunk = record_proc.stdout.read(8000)
+                    if not chunk:
+                        log("arecord stream ended")
+                        break
 
-                # Send audio chunk to proxy
-                with open(tmp_raw, "rb") as f:
-                    pcm_data = f.read()
-
-                r = requests.post(
-                    f"{PROXY_URL}/live/audio?session_id={self._live_session_id}",
-                    data=pcm_data,
-                    headers={"Content-Type": "application/octet-stream"},
-                    timeout=5
-                )
-
-                if r.status_code == 200 and len(r.content) > 100:
-                    # Got audio response — play it
-                    self.ui.set_state(STATE_SPEAKING)
-                    self.ui.set_status("LIVE - Speaking")
-
-                    # Write response PCM to WAV for aplay
-                    resp_wav = "/tmp/siteeye_live_resp.wav"
-                    self._pcm_to_wav(r.content, resp_wav, sample_rate=24000)
-
-                    subprocess.run(
-                        ["aplay", "-D", AUDIO_DEV, resp_wav],
-                        capture_output=True, timeout=30
+                    r = requests.post(
+                        f"{PROXY_URL}/live/audio?session_id={self._live_session_id}",
+                        data=chunk,
+                        headers={"Content-Type": "application/octet-stream"},
+                        timeout=3
                     )
 
-                    self.ui.set_state(STATE_LISTENING)
-                    self.ui.set_status("LIVE - Speak naturally")
+                    if r.status_code == 200 and len(r.content) > 100:
+                        # Got response audio — queue for playback
+                        try:
+                            play_queue.put_nowait(r.content)
+                        except queue.Full:
+                            pass  # drop oldest if queue full
+                        self.ui.set_state(STATE_SPEAKING)
+                        self.ui.set_status("LIVE - Speaking")
+                        error_count[0] = 0
+                    elif r.status_code == 204:
+                        self.ui.set_state(STATE_LISTENING)
+                        self.ui.set_status("LIVE - Listening")
+                        error_count[0] = 0
+                    elif r.status_code == 404 or r.status_code == 410:
+                        log(f"Session gone ({r.status_code}), stopping live")
+                        self._live_mode = False
+                        break
+                    else:
+                        error_count[0] += 1
 
+                except requests.exceptions.Timeout:
+                    error_count[0] += 1
+                except Exception as e:
+                    log(f"Send loop error: {e}")
+                    error_count[0] += 1
+                    if error_count[0] > 10:
+                        log("Too many errors, stopping live mode")
+                        self._live_mode = False
+                        break
+                    time.sleep(0.1)
+
+        def play_loop():
+            """Play response audio through continuous aplay process."""
+            play_proc = None
+            try:
+                play_proc = subprocess.Popen(
+                    ["aplay", "-D", AUDIO_DEV, "-f", "S16_LE", "-r", "24000",
+                     "-c", "1", "-t", "raw"],
+                    stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
+            except Exception as e:
+                log(f"Failed to start aplay: {e}")
+                return
+
+            while self._live_mode:
+                try:
+                    audio = play_queue.get(timeout=1)
+                    if play_proc.poll() is not None:
+                        # aplay died, restart it
+                        try:
+                            play_proc = subprocess.Popen(
+                                ["aplay", "-D", AUDIO_DEV, "-f", "S16_LE", "-r", "24000",
+                                 "-c", "1", "-t", "raw"],
+                                stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+                            )
+                        except Exception:
+                            break
+                    play_proc.stdin.write(audio)
+                    play_proc.stdin.flush()
+                except queue.Empty:
+                    continue
+                except (BrokenPipeError, OSError):
+                    log("aplay pipe broken, restarting")
                     try:
-                        os.remove(resp_wav)
+                        play_proc = subprocess.Popen(
+                            ["aplay", "-D", AUDIO_DEV, "-f", "S16_LE", "-r", "24000",
+                             "-c", "1", "-t", "raw"],
+                            stdin=subprocess.PIPE, stderr=subprocess.DEVNULL
+                        )
+                    except Exception:
+                        break
+
+            if play_proc and play_proc.poll() is None:
+                try:
+                    play_proc.stdin.close()
+                    play_proc.terminate()
+                    play_proc.wait(timeout=2)
+                except Exception:
+                    try:
+                        play_proc.kill()
                     except Exception:
                         pass
 
-                elif r.status_code == 204:
-                    # No response yet — Gemini is still listening
-                    self.ui.set_state(STATE_LISTENING)
-                    self.ui.set_status("LIVE - Listening")
-
-                # Check for text/transcription via status
+        def text_poll_loop():
+            """Periodically check for text from Gemini and update display."""
+            while self._live_mode and self._live_session_id:
                 try:
-                    status_r = requests.get(
+                    r = requests.get(
                         f"{PROXY_URL}/live/status?session_id={self._live_session_id}",
                         timeout=2)
-                    if status_r.status_code == 200:
-                        sdata = status_r.json()
-                        text = sdata.get("text", "")
+                    if r.status_code == 200:
+                        data = r.json()
+                        text = data.get("text", "")
                         if text:
                             self.ui.response_text = text
-                            # Mirror to Telegram
                             threading.Thread(target=self._send_telegram,
                                 args=(f"🔴 LIVE\n{text}",), daemon=True).start()
                 except Exception:
                     pass
+                time.sleep(1.5)
 
-                try:
-                    os.remove(tmp_raw)
-                except Exception:
-                    pass
+        # Launch all threads
+        send_thread = threading.Thread(target=send_loop, daemon=True)
+        play_thread = threading.Thread(target=play_loop, daemon=True)
+        text_thread = threading.Thread(target=text_poll_loop, daemon=True)
+        send_thread.start()
+        play_thread.start()
+        text_thread.start()
 
-            except Exception as e:
-                log(f"Live loop error: {e}")
-                time.sleep(0.5)
+        log("🔴 Live streaming threads started")
+
+        # Wait until live mode ends
+        while self._live_mode:
+            time.sleep(0.2)
+
+        # Cleanup
+        try:
+            record_proc.terminate()
+            record_proc.wait(timeout=2)
+        except Exception:
+            try:
+                record_proc.kill()
+            except Exception:
+                pass
+
+        # Wait for threads to finish
+        send_thread.join(timeout=3)
+        play_thread.join(timeout=3)
 
         self._busy = False
+        log("⬛ Live streaming threads stopped")
 
     def _pcm_to_wav(self, pcm_data, wav_path, sample_rate=24000):
         """Convert raw PCM bytes to a WAV file for aplay."""
