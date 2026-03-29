@@ -40,8 +40,8 @@ RECORD_FMT = "S16_LE"
 RECORD_RATE = "16000"
 RECORD_CHANNELS = "1"
 
-# Display target FPS — lower = less flicker, less CPU
-TARGET_FPS = 8
+# Display target FPS — 6fps is smooth enough for expressions, minimizes SPI load
+TARGET_FPS = 6
 FRAME_INTERVAL = 1.0 / TARGET_FPS
 
 
@@ -105,18 +105,20 @@ class SiteEye:
 
         audio_path = "/tmp/siteeye_voice.wav"
         try:
-            self._recording = True
-            self._record_proc = subprocess.Popen(
+            # Start recording — set proc BEFORE setting _recording flag
+            proc = subprocess.Popen(
                 ["arecord", "-D", AUDIO_DEV, "-f", RECORD_FMT, "-r", RECORD_RATE,
                  "-c", RECORD_CHANNELS, "-d", str(MAX_RECORD_SECONDS), audio_path],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
+            self._record_proc = proc
+            self._recording = True
             log("Recording... (press button to stop, or wait)")
 
             start = time.time()
             while self._recording and (time.time() - start) < MAX_RECORD_SECONDS:
                 time.sleep(0.1)
-                if self._record_proc.poll() is not None:
+                if proc.poll() is not None:
                     break
 
             self._stop_recording()
