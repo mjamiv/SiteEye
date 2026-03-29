@@ -219,6 +219,7 @@ class SiteEye:
                 log(f"\U0001f4dd You: {transcription}")
                 log(f"\U0001f916 Molt: {response}")
 
+                self.ui.set_status("Speaking")
                 self.ui.set_state(STATE_SPEAKING, response)
 
                 if audio_b64:
@@ -231,6 +232,7 @@ class SiteEye:
                 self.ui.response_text = ""
             else:
                 log(f"\u274c Proxy error: {r.status_code}")
+                self.ui.set_status("Error")
                 self.ui.set_state(STATE_ERROR, f"Error {r.status_code}")
                 time.sleep(2)
         except Exception as e:
@@ -249,18 +251,64 @@ class SiteEye:
         self._busy = False
 
     def _camera_flow(self):
-        """Camera pipeline: snap → vision → TTS → speaker."""
+        """Camera pipeline: live viewfinder → press to capture → vision → TTS."""
         if self._busy:
             return
         self._busy = True
 
-        log("\U0001f4f7 Camera flow started")
-        self.ui.set_state(STATE_CAMERA)
-        time.sleep(0.3)
+        log("\U0001f4f7 Camera flow — live viewfinder")
+        self.ui.set_status("Viewfinder — press to capture")
 
-        img_path = self._capture_photo()
-        if not img_path:
-            log("\u274c Camera failed")
+        # Live viewfinder loop: stream camera to LCD until button press
+        self._camera_shutter = False
+        try:
+            from picamera2 import Picamera2
+            picam2 = Picamera2()
+            config = picam2.create_preview_configuration(
+                main={'size': (240, 280), 'format': 'RGB888'})
+            picam2.configure(config)
+            picam2.start()
+            time.sleep(0.3)  # Let auto-exposure settle
+
+            # Set up shutter trigger
+            def _shutter_press():
+                self._camera_shutter = True
+            # Temporarily override button callback for shutter
+            old_press = self.board.button_press_callback
+            self.board.button_press_callback = _shutter_press
+
+            log("Live viewfinder active — press button to capture")
+            frame_count = 0
+            while not self._camera_shutter and self._running:
+                try:
+                    frame = picam2.capture_array()
+                    self.ui.show_live_frame(frame)
+                    frame_count += 1
+                except Exception:
+                    pass
+                time.sleep(0.08)  # ~12fps target for viewfinder
+                # Safety timeout: 30 seconds
+                if frame_count > 375:
+                    break
+
+            # Restore button callback
+            self.board.button_press_callback = old_press
+
+            # Capture final still at full resolution
+            self._play_feedback("click.wav")
+            self.ui.set_status("Capturing...")
+            img_path = "/tmp/siteeye_snap.jpg"
+            picam2.switch_mode_and_capture_file(
+                picam2.create_still_configuration(), img_path)
+            picam2.stop()
+            picam2.close()
+        except Exception as e:
+            log(f"Camera error: {e}")
+            try:
+                picam2.stop()
+                picam2.close()
+            except Exception:
+                pass
             self.ui.set_state(STATE_ERROR, "Camera failed")
             self._play_feedback("error.wav")
             time.sleep(2)
@@ -268,7 +316,16 @@ class SiteEye:
             self._busy = False
             return
 
-        # Show captured image on LCD
+        if not os.path.exists(img_path) or os.path.getsize(img_path) < 1000:
+            log("\u274c Capture failed")
+            self.ui.set_state(STATE_ERROR, "Capture failed")
+            self._play_feedback("error.wav")
+            time.sleep(2)
+            self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
+            self._busy = False
+            return
+
+        # Show captured still on LCD
         self.ui.show_captured_image(img_path)
         log("\U0001f504 Sending to proxy for vision...")
 

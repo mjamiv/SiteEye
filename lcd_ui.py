@@ -110,8 +110,8 @@ class LcdUI:
 
         # Font cache
         try:
-            self._font_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
-            self._font_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
+            self._font_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
+            self._font_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
             self._font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
             self._font_mono = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 38)
             self._font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
@@ -230,6 +230,62 @@ class LcdUI:
                 self._draw_idle_hint(draw)
 
         self._send_to_display(img)
+
+    def show_live_frame(self, frame_array):
+        """Display a live camera frame (numpy RGB array) on the LCD with viewfinder overlay."""
+        try:
+            import numpy as np
+            from PIL import Image as PILImage
+
+            img = PILImage.fromarray(frame_array).resize((WIDTH, HEIGHT), PILImage.NEAREST)
+            draw = ImageDraw.Draw(img)
+
+            # Viewfinder crosshair overlay
+            cx, cy = WIDTH // 2, HEIGHT // 2
+            line_len = 18
+            gap = 8
+            crosshair_color = (200, 220, 240, 180)
+            # Horizontal
+            draw.line([(cx - line_len - gap, cy), (cx - gap, cy)], fill=(200, 220, 240), width=1)
+            draw.line([(cx + gap, cy), (cx + line_len + gap, cy)], fill=(200, 220, 240), width=1)
+            # Vertical
+            draw.line([(cx, cy - line_len - gap), (cx, cy - gap)], fill=(200, 220, 240), width=1)
+            draw.line([(cx, cy + gap), (cx, cy + line_len + gap)], fill=(200, 220, 240), width=1)
+
+            # Corner brackets
+            blen = 15
+            bw = 2
+            for bx, by, dx, dy in [(0, 0, 1, 1), (WIDTH, 0, -1, 1),
+                                     (0, HEIGHT, 1, -1), (WIDTH, HEIGHT, -1, -1)]:
+                x0 = bx + (4 * dx)
+                y0 = by + (4 * dy)
+                draw.line([(x0, y0), (x0 + blen * dx, y0)], fill=ACCENT, width=bw)
+                draw.line([(x0, y0), (x0, y0 + blen * dy)], fill=ACCENT, width=bw)
+
+            # "Press to capture" at bottom
+            hint = "Press to capture"
+            bbox = draw.textbbox((0, 0), hint, font=self._font_md)
+            tw = bbox[2] - bbox[0]
+            # Dark backing for readability
+            draw.rectangle([0, HEIGHT - 24, WIDTH, HEIGHT], fill=(0, 0, 0))
+            draw.text(((WIDTH - tw) // 2, HEIGHT - 22), hint, fill=TEXT_PRIMARY, font=self._font_md)
+
+            # Send directly — bypass double-buffer (live feed always changes)
+            arr = np.array(img, dtype=np.uint16)
+            r = (arr[:, :, 0] & 0xF8) << 8
+            g = (arr[:, :, 1] & 0xFC) << 3
+            b = arr[:, :, 2] >> 3
+            rgb565 = r | g | b
+            data_hi = ((rgb565 >> 8) & 0xFF).astype(np.uint8)
+            data_lo = (rgb565 & 0xFF).astype(np.uint8)
+            buf = bytearray(len(data_hi.tobytes()) * 2)
+            buf[0::2] = data_hi.tobytes()
+            buf[1::2] = data_lo.tobytes()
+            self.board.set_window(0, 0, WIDTH - 1, HEIGHT - 1)
+            self.board._send_data(buf)
+            self._last_buf = None  # Invalidate double-buffer cache
+        except Exception as e:
+            pass
 
     def show_captured_image(self, img_path):
         """Load captured photo for display during analysis/response."""
@@ -437,12 +493,12 @@ class LcdUI:
     # ------------------------------------------------------------------
 
     def _draw_status_bar(self, draw, state, status):
-        y = SAFE_TOP + 2
+        y = SAFE_TOP + 1
 
-        # Status dot (left side)
-        dot_x = SAFE_LEFT + 6
-        dot_y = y + 5
-        dot_r = 3
+        # Status dot (left side) — bigger for visibility
+        dot_x = SAFE_LEFT + 8
+        dot_y = y + 7
+        dot_r = 4
         if state == STATE_ERROR:
             dot_color = STATUS_RED
         elif state in (STATE_THINKING, STATE_CAMERA):
@@ -454,18 +510,18 @@ class LcdUI:
         draw.ellipse([dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r],
                      fill=dot_color)
 
-        # Status text next to dot
+        # Status text next to dot — brighter for readability
         if status:
-            draw.text((dot_x + dot_r + 5, y + 1), status, fill=TEXT_DIM, font=self._font_sm)
+            draw.text((dot_x + dot_r + 6, y), status, fill=TEXT_PRIMARY, font=self._font_sm)
 
         # "SiteEye" wordmark (right side)
         mark = "SiteEye"
         bbox = draw.textbbox((0, 0), mark, font=self._font_sm)
         mw = bbox[2] - bbox[0]
-        draw.text((SAFE_RIGHT - mw - 4, y + 1), mark, fill=TEXT_DIM, font=self._font_sm)
+        draw.text((SAFE_RIGHT - mw - 4, y), mark, fill=ACCENT, font=self._font_sm)
 
         # Separator line
-        sep_y = y + 16
+        sep_y = y + 18
         draw.line([(SAFE_LEFT, sep_y), (SAFE_RIGHT, sep_y)], fill=SEPARATOR_COLOR, width=1)
 
     # ------------------------------------------------------------------
@@ -660,19 +716,18 @@ class LcdUI:
 
     def _draw_idle_hint(self, draw):
         """Show button usage hint at bottom when idle."""
-        # Cycle between hints every 4 seconds
         hints = [
-            "Tap button → Voice",
-            "Hold button → Camera",
+            "Tap → Voice",
+            "Hold → Camera",
         ]
         idx = int(time.time() / 4) % len(hints)
         hint = hints[idx]
 
-        # Subtle text at bottom safe zone
-        bbox = draw.textbbox((0, 0), hint, font=self._font_sm)
+        # Centered, readable, uses medium font
+        bbox = draw.textbbox((0, 0), hint, font=self._font_md)
         tw = bbox[2] - bbox[0]
         tx = (WIDTH - tw) // 2
-        draw.text((tx, SAFE_BOT - 6), hint, fill=TEXT_DIM, font=self._font_sm)
+        draw.text((tx, SAFE_BOT - 8), hint, fill=TEXT_DIM, font=self._font_md)
 
     def _draw_response_text(self, draw, text):
         panel_x = SAFE_LEFT + 2
