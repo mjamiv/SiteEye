@@ -63,6 +63,11 @@ class SiteEye:
         self._press_time = 0
         self._busy = False
 
+        # Audio feedback files
+        self._base_dir = os.path.dirname(os.path.abspath(__file__))
+        self._hold_timer = None
+        self._held_long = False
+
         # Register button callbacks
         self.board.button_press_callback = self._on_button_press
         self.board.button_release_callback = self._on_button_release
@@ -86,21 +91,56 @@ class SiteEye:
         except Exception:
             pass
 
+    def _play_feedback(self, name):
+        """Play a short audio feedback file (non-blocking)."""
+        path = os.path.join(self._base_dir, "assets", name)
+        if os.path.exists(path):
+            threading.Thread(target=lambda: subprocess.run(
+                ["aplay", "-D", AUDIO_DEV, path],
+                capture_output=True, timeout=5
+            ), daemon=True).start()
+
     def _on_button_press(self):
+        """Button pressed — show hint, start hold timer."""
         self._press_time = time.time()
+        self._held_long = False
+
+        if self._busy:
+            return
+
+        # Immediate feedback: click sound + hint on screen
+        self._play_feedback("click.wav")
+        if not self._recording:
+            self.ui.set_status("Release → Voice  |  Hold → Camera")
+
+        # Start a timer to detect hold (camera mode)
+        def _check_hold():
+            time.sleep(BUTTON_HOLD_THRESHOLD)
+            if time.time() - self._press_time >= BUTTON_HOLD_THRESHOLD and not self._busy:
+                self._held_long = True
+                self._play_feedback("camera_beep.wav")
+                self.ui.set_state(STATE_CAMERA)
+                self.ui.set_status("Release to capture photo")
+
+        self._hold_timer = threading.Thread(target=_check_hold, daemon=True)
+        self._hold_timer.start()
 
     def _on_button_release(self):
+        """Button released — dispatch voice or camera based on hold duration."""
         if self._busy:
             if self._recording:
                 self._stop_recording()
             return
 
         duration = time.time() - self._press_time
+
         if self._recording:
             self._stop_recording()
-        elif duration > BUTTON_HOLD_THRESHOLD:
+        elif self._held_long or duration > BUTTON_HOLD_THRESHOLD:
+            # Camera mode
             threading.Thread(target=self._camera_flow, daemon=True).start()
         else:
+            # Voice mode
             threading.Thread(target=self._voice_flow, daemon=True).start()
 
     def _voice_flow(self):
@@ -121,10 +161,12 @@ class SiteEye:
             )
             self._record_proc = proc
             self._recording = True
-            log("Recording... (press button to stop, or wait)")
+            log("Recording... (press button to stop)")
 
             start = time.time()
             while self._recording and (time.time() - start) < MAX_RECORD_SECONDS:
+                elapsed = int(time.time() - start)
+                self.ui.set_status(f"Recording {elapsed}s — press to stop")
                 time.sleep(0.1)
                 if proc.poll() is not None:
                     break
@@ -133,6 +175,7 @@ class SiteEye:
         except Exception as e:
             log(f"Record error: {e}")
             self.ui.set_state(STATE_ERROR, "Record failed")
+            self._play_feedback("error.wav")
             time.sleep(2)
             self.ui.set_state(STATE_IDLE)
             self._busy = False
@@ -215,6 +258,7 @@ class SiteEye:
         if not img_path:
             log("\u274c Camera failed")
             self.ui.set_state(STATE_ERROR, "Camera failed")
+            self._play_feedback("error.wav")
             time.sleep(2)
             self.ui.set_state(STATE_IDLE)
             self._busy = False

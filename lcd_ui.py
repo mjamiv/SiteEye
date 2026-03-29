@@ -223,9 +223,11 @@ class LcdUI:
             elif state == STATE_SPEAKING:
                 self._draw_speaking_pulse(draw)
 
-            # Response text OR nothing (clean idle)
+            # Response text OR idle hint
             if resp:
                 self._draw_response_text(draw, resp)
+            elif state == STATE_IDLE:
+                self._draw_idle_hint(draw)
 
         self._send_to_display(img)
 
@@ -653,6 +655,22 @@ class LcdUI:
     # ------------------------------------------------------------------
     # Drawing: Response text
     # ------------------------------------------------------------------
+
+    def _draw_idle_hint(self, draw):
+        """Show button usage hint at bottom when idle."""
+        # Cycle between hints every 4 seconds
+        hints = [
+            "Tap button → Voice",
+            "Hold button → Camera",
+        ]
+        idx = int(time.time() / 4) % len(hints)
+        hint = hints[idx]
+
+        # Subtle text at bottom safe zone
+        bbox = draw.textbbox((0, 0), hint, font=self._font_sm)
+        tw = bbox[2] - bbox[0]
+        tx = (WIDTH - tw) // 2
+        draw.text((tx, SAFE_BOT - 6), hint, fill=TEXT_DIM, font=self._font_sm)
 
     def _draw_response_text(self, draw, text):
         panel_x = SAFE_LEFT + 2
