@@ -29,10 +29,13 @@ from lcd_ui import LcdUI, STATE_IDLE, STATE_LISTENING, STATE_THINKING, STATE_SPE
 
 # --- Config ---
 PROXY_URL = os.environ.get("SITEEYE_PROXY", "https://molted.tail4a98c5.ts.net")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8358560979:AAHEPmk-qQg9RsmrIR2cXyNP4i4u_Hqtl2U")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8217278203")
 CAPTURE_WIDTH = 640
 CAPTURE_HEIGHT = 480
 MAX_RECORD_SECONDS = 30
 BUTTON_HOLD_THRESHOLD = 1.0  # seconds for camera mode
+DOUBLE_TAP_WINDOW = 0.4  # seconds — two presses within this = double tap
 
 # Audio device
 AUDIO_DEV = "plughw:0,0"
@@ -66,7 +69,10 @@ class SiteEye:
         # Audio feedback files
         self._base_dir = os.path.dirname(os.path.abspath(__file__))
         self._held_long = False
-        self._press_id = 0  # increments on each press, cancels stale hold timers
+        self._press_id = 0
+        self._last_release_time = 0  # for double-tap detection
+        self._tap_count = 0
+        self._tap_timer = None
 
         # Register button callbacks
         self.board.button_press_callback = self._on_button_press
@@ -90,6 +96,75 @@ class SiteEye:
             log("All volume controls maxed")
         except Exception:
             pass
+
+    def _send_telegram(self, text, image_path=None):
+        """Send text/photo to Telegram — mirrors device activity to phone."""
+        if not TELEGRAM_BOT_TOKEN:
+            return
+        try:
+            if image_path and os.path.exists(image_path):
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+                with open(image_path, "rb") as f:
+                    requests.post(url,
+                        data={"chat_id": TELEGRAM_CHAT_ID, "caption": text[:1024]},
+                        files={"photo": f}, timeout=15)
+            else:
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=10)
+        except Exception as e:
+            log(f"Telegram send failed: {e}")
+
+    def _info_screen(self):
+        """Double-tap: show device info on LCD for 5 seconds."""
+        if self._busy:
+            return
+        self._busy = True
+        self._play_feedback("click.wav")
+        log("ℹ️ Device info screen")
+
+        try:
+            temp = int(open("/sys/class/thermal/thermal_zone0/temp").read().strip()) / 1000
+        except Exception:
+            temp = 0
+        try:
+            uptime_s = float(open("/proc/uptime").read().split()[0])
+            hours, mins = int(uptime_s // 3600), int((uptime_s % 3600) // 60)
+            uptime = f"{hours}h {mins}m"
+        except Exception:
+            uptime = "?"
+        try:
+            ip = subprocess.check_output(["hostname", "-I"], text=True).strip().split()[0]
+        except Exception:
+            ip = "no network"
+        try:
+            df = subprocess.check_output(["df", "-h", "/"], text=True).split("\n")[1].split()
+            disk = f"{df[2]} / {df[1]}"
+        except Exception:
+            disk = "?"
+
+        info_lines = [
+            f"IP: {ip}",
+            f"Temp: {temp:.1f} C",
+            f"Uptime: {uptime}",
+            f"Disk: {disk}",
+            f"Proxy: {'Online' if self._check_proxy() else 'Offline'}",
+        ]
+        self.ui.set_status("Device Info")
+        self.ui.set_state(STATE_IDLE)
+        self.ui.response_text = "\n".join(info_lines)
+        self.ui._last_buf = None
+        time.sleep(5)
+        self.ui.response_text = ""
+        self.ui.set_status("")
+        self.ui.set_state(STATE_IDLE)
+        self._busy = False
+
+    def _check_proxy(self):
+        try:
+            r = requests.get(f"{PROXY_URL}/health", timeout=3)
+            return r.status_code == 200
+        except Exception:
+            return False
 
     def _play_feedback(self, name):
         """Play a short audio feedback file (non-blocking)."""
@@ -132,18 +207,43 @@ class SiteEye:
         threading.Thread(target=_check_hold, daemon=True).start()
 
     def _on_button_release(self):
-        """Button released — dispatch voice or camera."""
+        """Button released — dispatch voice, camera, or double-tap info."""
         if self._busy or self._recording:
             return
 
         duration = time.time() - self._press_time
         if duration < 0.05:
-            return  # Debounce — ignore spurious sub-50ms presses
+            return  # Debounce
 
+        # Long hold = camera (already detected)
         if self._held_long or duration > BUTTON_HOLD_THRESHOLD:
+            self._tap_count = 0
             threading.Thread(target=self._camera_flow, daemon=True).start()
-        else:
-            threading.Thread(target=self._voice_flow, daemon=True).start()
+            return
+
+        # Short tap — check for double-tap
+        now = time.time()
+        if now - self._last_release_time < DOUBLE_TAP_WINDOW:
+            # Double tap detected!
+            self._tap_count = 0
+            self._last_release_time = 0
+            if self._tap_timer:
+                self._tap_timer.cancel()
+            threading.Thread(target=self._info_screen, daemon=True).start()
+            return
+
+        self._last_release_time = now
+        self._tap_count = 1
+
+        # Wait briefly to see if a second tap comes
+        def _delayed_voice():
+            time.sleep(DOUBLE_TAP_WINDOW + 0.05)
+            if self._tap_count == 1 and not self._busy:
+                self._tap_count = 0
+                self._voice_flow()
+
+        self._tap_timer = threading.Thread(target=_delayed_voice, daemon=True)
+        self._tap_timer.start()
 
     def _voice_flow(self):
         """Full voice pipeline: record → proxy → TTS → speaker."""
@@ -218,6 +318,10 @@ class SiteEye:
 
                 log(f"\U0001f4dd You: {transcription}")
                 log(f"\U0001f916 Molt: {response}")
+
+                # Mirror to Telegram
+                threading.Thread(target=self._send_telegram,
+                    args=(f"🎙 You: {transcription}\n\n🤖 {response}",), daemon=True).start()
 
                 self.ui.set_status("Speaking")
                 self.ui.set_state(STATE_SPEAKING, response)
@@ -342,6 +446,10 @@ class SiteEye:
                 log(f"\U0001f916 {response}")
 
                 self.ui.set_photo_text(response)
+
+                # Mirror photo + response to Telegram
+                threading.Thread(target=self._send_telegram,
+                    args=(f"📷 SiteEye\n\n🤖 {response}", img_path), daemon=True).start()
 
                 try:
                     tts_r = requests.post(f"{PROXY_URL}/tts",

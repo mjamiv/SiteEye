@@ -25,31 +25,31 @@ SAFE_BOT = HEIGHT - CORNER_H - 2
 SAFE_LEFT = 12
 SAFE_RIGHT = WIDTH - 12
 
-# --- Professional Color Palette ---
-BG = (8, 12, 20)                # Deep navy #080C14
-BG_PANEL = (12, 18, 30)         # Slightly lighter panel
-TEXT_PRIMARY = (232, 236, 240)   # Cool white #E8ECF0
-TEXT_DIM = (90, 100, 115)        # Muted gray-blue
-ACCENT = (74, 158, 204)         # Teal accent #4A9ECC
-ACCENT_DIM = (40, 85, 110)      # Dimmed accent
-ACCENT_BRIGHT = (100, 185, 230) # Brighter accent for highlights
+# --- Color Palette: Black / White / Yellow-Gold ---
+BG = (0, 0, 0)                  # Pure black
+BG_PANEL = (12, 12, 12)         # Near-black panel
+TEXT_PRIMARY = (255, 255, 255)   # Pure white
+TEXT_DIM = (120, 120, 110)       # Warm gray
+ACCENT = (255, 200, 40)         # Gold/yellow #FFC828
+ACCENT_DIM = (140, 110, 20)     # Dimmed gold
+ACCENT_BRIGHT = (255, 220, 80)  # Bright gold highlight
 
 # Face colors
-EYE_WHITE = (240, 242, 245)     # Slightly warm white
-EYE_EDGE = (200, 205, 215)      # Subtle gray at edges
-PUPIL_COLOR = (16, 20, 32)      # Near-black
-PUPIL_CENTER = (8, 10, 18)      # True dark center
+EYE_WHITE = (248, 248, 248)     # Clean white
+EYE_EDGE = (210, 210, 210)      # Light gray edges
+PUPIL_COLOR = (15, 15, 15)      # Near-black
+PUPIL_CENTER = (5, 5, 5)        # True black center
 HIGHLIGHT_DOT = (255, 255, 255) # Pure white reflection
-MOUTH_LINE = (160, 168, 180)    # Subtle gray for closed mouth
-MOUTH_FILL = (24, 30, 45)       # Dark fill for open mouth
-MOUTH_OUTLINE = (120, 130, 145) # Outline for open mouth
+MOUTH_LINE = (180, 180, 170)    # Light gray for closed mouth
+MOUTH_FILL = (20, 20, 20)       # Dark fill for open mouth
+MOUTH_OUTLINE = (150, 150, 140) # Warm gray outline
 
-# Status colors (muted, professional)
-STATUS_GREEN = (50, 180, 100)
-STATUS_RED = (200, 70, 70)
-STATUS_YELLOW = (200, 170, 60)
-STATUS_BLUE = ACCENT
-SEPARATOR_COLOR = (35, 45, 60)
+# Status colors
+STATUS_GREEN = (80, 200, 80)
+STATUS_RED = (220, 60, 60)
+STATUS_YELLOW = ACCENT
+STATUS_BLUE = (80, 160, 255)
+SEPARATOR_COLOR = (40, 40, 35)
 
 # Face geometry
 EYE_Y = 112
@@ -110,12 +110,21 @@ class LcdUI:
 
         # Font cache
         try:
-            self._font_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
-            self._font_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-            self._font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
-            self._font_mono = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 38)
-            self._font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
-            self._font_check = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 11)
+            # Roboto Condensed — industrial narrow font (closest to Acumin Narrow Pro)
+            # Falls back to DejaVu Sans Condensed if Roboto not installed
+            import os as _os
+            rc = "/usr/share/fonts/truetype/roboto/unhinted/RobotoCondensed-Regular.ttf"
+            rcb = "/usr/share/fonts/truetype/roboto/unhinted/RobotoCondensed-Bold.ttf"
+            if not _os.path.exists(rc):
+                rc = "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf"
+                rcb = "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf"
+            mono = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
+            self._font_sm = ImageFont.truetype(rc, 14)
+            self._font_md = ImageFont.truetype(rc, 15)
+            self._font_lg = ImageFont.truetype(rcb, 24)
+            self._font_mono = ImageFont.truetype(rcb, 40)     # Boot title
+            self._font_sub = ImageFont.truetype(rc, 12)
+            self._font_check = ImageFont.truetype(mono, 12)
         except Exception:
             self._font_sm = ImageFont.load_default()
             self._font_md = self._font_sm
@@ -165,15 +174,15 @@ class LcdUI:
 
         # RGB LED (muted, professional)
         led_map = {
-            STATE_IDLE: (0, 30, 0),
-            STATE_LISTENING: (0, 30, 80),
-            STATE_THINKING: (60, 50, 0),
-            STATE_SPEAKING: (0, 40, 80),
-            STATE_CAMERA: (40, 40, 50),
-            STATE_ERROR: (80, 15, 15),
-            STATE_BOOT: (20, 30, 50),
+            STATE_IDLE: (40, 30, 0),       # Warm gold dim
+            STATE_LISTENING: (60, 50, 0),   # Gold
+            STATE_THINKING: (80, 60, 0),    # Bright gold
+            STATE_SPEAKING: (50, 40, 0),    # Gold
+            STATE_CAMERA: (60, 60, 60),     # White
+            STATE_ERROR: (80, 15, 15),      # Red
+            STATE_BOOT: (30, 25, 0),        # Dim gold
         }
-        r, g, b = led_map.get(state, (0, 20, 0))
+        r, g, b = led_map.get(state, (30, 25, 0))
         try:
             self.board.set_rgb(r, g, b)
         except Exception:

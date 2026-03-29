@@ -11,6 +11,8 @@ ExecStart=/home/pi-molt/molt-device/venv/bin/python3 main_v2.py
 Restart=on-failure
 RestartSec=5
 Environment=SITEEYE_PROXY=https://molted.tail4a98c5.ts.net
+Environment=TELEGRAM_BOT_TOKEN=8358560979:AAHEPmk-qQg9RsmrIR2cXyNP4i4u_Hqtl2U
+Environment=TELEGRAM_CHAT_ID=8217278203
 
 [Install]
 WantedBy=multi-user.target
