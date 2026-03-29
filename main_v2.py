@@ -212,14 +212,14 @@ class SiteEye:
             self._busy = False
             return
 
-        self.ui.set_state(STATE_THINKING)
+        self.ui.set_state(STATE_THINKING, "Analyzing image...")
         log("🔄 Sending to proxy for vision...")
 
         try:
             with open(img_path, "rb") as f:
                 r = requests.post(f"{PROXY_URL}/vision",
                     files={"image": ("snap.jpg", f, "image/jpeg")},
-                    data={"prompt": "What do you see? Be concise."},
+                    data={"prompt": "What do you see? Be concise and conversational."},
                     timeout=60)
 
             if r.status_code == 200:
@@ -228,18 +228,39 @@ class SiteEye:
                 log(f"🤖 {response}")
                 self.ui.set_state(STATE_SPEAKING, response)
 
+                # Use /voice_all with dummy silent audio to get TTS back
+                # This is more reliable than /tts endpoint
                 try:
+                    # Create a minimal silent WAV for the proxy
+                    import struct, io
+                    silent = io.BytesIO()
+                    # WAV header for 0.1s of silence at 16kHz mono S16_LE
+                    n_samples = 1600
+                    data_size = n_samples * 2
+                    silent.write(b'RIFF')
+                    silent.write(struct.pack('<I', 36 + data_size))
+                    silent.write(b'WAVEfmt ')
+                    silent.write(struct.pack('<IHHIIHH', 16, 1, 1, 16000, 32000, 2, 16))
+                    silent.write(b'data')
+                    silent.write(struct.pack('<I', data_size))
+                    silent.write(b'\x00' * data_size)
+                    silent.seek(0)
+
+                    # Use /tts endpoint directly with response text
                     tts_r = requests.post(f"{PROXY_URL}/tts",
-                        json={"text": response}, timeout=30)
+                        json={"text": response}, timeout=60)
                     if tts_r.status_code == 200:
                         tts_data = tts_r.json()
                         if tts_data.get("audio"):
                             self._play_audio_b64(tts_data["audio"])
                         else:
+                            log("⚠️ TTS returned no audio")
                             time.sleep(3)
                     else:
+                        log(f"⚠️ TTS error: {tts_r.status_code}")
                         time.sleep(3)
-                except:
+                except Exception as e:
+                    log(f"⚠️ TTS failed: {e}")
                     time.sleep(3)
 
                 # Keep text visible briefly, then clear

@@ -297,12 +297,13 @@ class LcdUI:
             elif state == STATE_THINKING:
                 self._draw_thinking_indicator(draw)
 
-        # Response text area — between mouth and bottom mode bar
+        # Response text OR mode bar — text takes priority when present
         if resp and state not in (STATE_BOOT, STATE_CAMERA):
-            self._draw_wrapped_text(draw, resp, SAFE_LEFT, 185, SAFE_RIGHT - SAFE_LEFT, self._font_md, TEXT_PRIMARY)
-
-        # Mode bar at bottom
-        self._draw_mode_bar(draw, state)
+            # Response text gets full area below face — no mode bar competing
+            self._draw_response_text(draw, resp)
+        else:
+            # Mode bar only when no text displayed
+            self._draw_mode_bar(draw, state)
 
         # Push to display
         self._send_to_display(img)
@@ -512,8 +513,20 @@ class LcdUI:
         if text:
             draw.text((SAFE_LEFT + 4, SAFE_BOT - 4), text, fill=color, font=self._font_sm)
 
-    def _draw_wrapped_text(self, draw, text, x, y, max_w, font, color):
-        """Word-wrap text in the lower area."""
+    def _draw_response_text(self, draw, text):
+        """Draw response text in the lower area — large, readable, no overlap."""
+        x = SAFE_LEFT
+        y_start = 180
+        max_w = SAFE_RIGHT - SAFE_LEFT
+        line_h = 18
+        max_lines = 5  # fits between face and bottom safe zone
+
+        try:
+            font = self._font_md
+        except:
+            font = ImageFont.load_default()
+
+        # Word wrap
         words = text.split()
         lines = []
         line = ""
@@ -529,6 +542,37 @@ class LcdUI:
         if line:
             lines.append(line)
 
+        # Show last N lines (scrolled to bottom for long text)
+        visible = lines[-max_lines:]
+
+        # Dim background behind text for readability
+        text_area_h = len(visible) * line_h + 8
+        draw.rectangle([0, y_start - 4, WIDTH, y_start + text_area_h],
+                        fill=(8, 8, 20))
+
+        for i, ln in enumerate(visible):
+            draw.text((x, y_start + i * line_h), ln, fill=TEXT_PRIMARY, font=font)
+
+        # If text is truncated, show scroll indicator
+        if len(lines) > max_lines:
+            draw.text((SAFE_RIGHT - 20, y_start - 2), "...", fill=TEXT_DIM, font=self._font_sm)
+
+    def _draw_wrapped_text(self, draw, text, x, y, max_w, font, color):
+        """Generic word-wrap (kept for compatibility)."""
+        words = text.split()
+        lines = []
+        line = ""
+        for w in words:
+            test = f"{line} {w}".strip()
+            bbox = draw.textbbox((0, 0), test, font=font)
+            if bbox[2] - bbox[0] > max_w:
+                if line:
+                    lines.append(line)
+                line = w
+            else:
+                line = test
+        if line:
+            lines.append(line)
         visible = lines[-5:]
         for i, ln in enumerate(visible):
             draw.text((x, y + i * 17), ln, fill=color, font=font)
