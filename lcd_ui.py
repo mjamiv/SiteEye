@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""SiteEye v2 LCD UI — Cozmo-style animated face on Whisplay 240×280 ST7789
+"""SiteEye v2 LCD UI — Premium AI assistant face on Whisplay 240×280 ST7789
 
-Features:
-  - Expressive eyes with blinks, saccades, squints, wide-open
-  - Animated mouth (speaking shapes, smile, neutral, surprised)
-  - Eyebrows for emotion
-  - State-driven expressions with smooth transitions
-  - RGB LED sync
+Pitch-ready design: dark navy theme, clean geometric face, smooth animations.
+Apple Watch meets construction tech. Confident, minimal, professional.
 """
 
 import sys
@@ -23,39 +19,47 @@ from WhisPlay import WhisPlayBoard
 # Display constants
 WIDTH = 240
 HEIGHT = 280
-# Whisplay LCD has 20px rounded corners top and bottom.
-# Safe zone: avoid placing content in the corner triangles.
-CORNER_H = 20  # corner chamfer height in px
-SAFE_TOP = CORNER_H + 2  # safe y for text at top
-SAFE_BOT = HEIGHT - CORNER_H - 2  # safe y for text at bottom
-SAFE_LEFT = 12  # inset from left edge near corners
+CORNER_H = 20
+SAFE_TOP = CORNER_H + 2
+SAFE_BOT = HEIGHT - CORNER_H - 2
+SAFE_LEFT = 12
 SAFE_RIGHT = WIDTH - 12
 
-# Colors
-BG = (10, 10, 26)
-EYE_WHITE = (255, 255, 255)
-PUPIL = (26, 26, 46)
-HIGHLIGHT = (136, 204, 255)
-TEXT_PRIMARY = (255, 255, 255)
-TEXT_DIM = (102, 102, 136)
-BLUE_ACCENT = (0, 100, 255)
-YELLOW_ACCENT = (255, 200, 0)
-PURPLE_ACCENT = (180, 0, 255)
-RED_ACCENT = (255, 51, 51)
-GREEN_ACCENT = (0, 204, 68)
-MOUTH_COLOR = (220, 220, 240)
-MOUTH_INSIDE = (40, 20, 60)
-BROW_COLOR = (200, 200, 220)
+# --- Professional Color Palette ---
+BG = (8, 12, 20)                # Deep navy #080C14
+BG_PANEL = (12, 18, 30)         # Slightly lighter panel
+TEXT_PRIMARY = (232, 236, 240)   # Cool white #E8ECF0
+TEXT_DIM = (90, 100, 115)        # Muted gray-blue
+ACCENT = (74, 158, 204)         # Teal accent #4A9ECC
+ACCENT_DIM = (40, 85, 110)      # Dimmed accent
+ACCENT_BRIGHT = (100, 185, 230) # Brighter accent for highlights
 
-# Face geometry — centered on full 240×280 display
-EYE_Y = 105  # vertical center for eyes (shifted down to clear top chamfer)
-LEFT_EYE_X = 72
-RIGHT_EYE_X = 168
-EYE_W = 38  # slightly wider for bigger screen presence
-EYE_H = 32
-PUPIL_R = 11
-CORNER_R = 10
-MOUTH_Y = 160  # mouth below eyes
+# Face colors
+EYE_WHITE = (240, 242, 245)     # Slightly warm white
+EYE_EDGE = (200, 205, 215)      # Subtle gray at edges
+PUPIL_COLOR = (16, 20, 32)      # Near-black
+PUPIL_CENTER = (8, 10, 18)      # True dark center
+HIGHLIGHT_DOT = (255, 255, 255) # Pure white reflection
+MOUTH_LINE = (160, 168, 180)    # Subtle gray for closed mouth
+MOUTH_FILL = (24, 30, 45)       # Dark fill for open mouth
+MOUTH_OUTLINE = (120, 130, 145) # Outline for open mouth
+
+# Status colors (muted, professional)
+STATUS_GREEN = (50, 180, 100)
+STATUS_RED = (200, 70, 70)
+STATUS_YELLOW = (200, 170, 60)
+STATUS_BLUE = ACCENT
+SEPARATOR_COLOR = (35, 45, 60)
+
+# Face geometry
+EYE_Y = 112
+LEFT_EYE_X = 75
+RIGHT_EYE_X = 165
+EYE_W = 34
+EYE_H = 24
+PUPIL_R = 9
+EYE_CORNER_R = 8
+MOUTH_Y = 165
 MOUTH_CX = 120
 
 # States
@@ -66,197 +70,121 @@ STATE_THINKING = "thinking"
 STATE_SPEAKING = "speaking"
 STATE_CAMERA = "camera"
 STATE_ERROR = "error"
-STATE_HAPPY = "happy"
+
+# Frame timing
+FRAME_INTERVAL = 1.0 / 6
 
 
 class LcdUI:
     def __init__(self):
         self.board = WhisPlayBoard()
-        self.board.set_backlight(70)
+        self.board.set_backlight(75)
         self.state = STATE_BOOT
         self.response_text = ""
         self.status_text = ""
         self._running = True
 
         # Photo overlay state
-        self._photo_img = None  # PIL Image of captured photo, held during camera flow
-        self._photo_text = ""   # Text to show below photo
+        self._photo_img = None
+        self._photo_text = ""
 
         # Animation state
         self._blink_amount = 0.0
-        self._next_blink = time.time() + random.uniform(2, 5)
+        self._next_blink = time.time() + random.uniform(2.5, 5)
         self._saccade_x = 0.0
         self._saccade_y = 0.0
+        self._saccade_target_x = 0.0
+        self._saccade_target_y = 0.0
         self._next_saccade = time.time() + random.uniform(1, 3)
         self._anim_frame = 0
-        self._mouth_open = 0.0  # 0=closed, 1=full open
+        self._mouth_open = 0.0
         self._target_mouth = 0.0
-        self._smile = 0.0  # -1=frown, 0=neutral, 1=smile
-        self._target_smile = 0.0
-        self._brow_raise = 0.0  # -1=angry, 0=neutral, 1=raised
-        self._target_brow = 0.0
         self._lid_squint = 0.0
         self._target_squint = 0.0
-        self._pupil_size = 1.0  # multiplier
+        self._pupil_size = 1.0
         self._target_pupil = 1.0
-        self._expression_start = 0
-        self._idle_mood_timer = time.time() + random.uniform(8, 15)
+        self._breathing_phase = 0.0
+        self._boot_start = time.time()
         self._lock = threading.Lock()
+        self._last_buf = None
 
         # Font cache
         try:
             self._font_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 11)
             self._font_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
-            self._font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
-            self._font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-        except:
+            self._font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 22)
+            self._font_mono = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 28)
+            self._font_sub = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 10)
+            self._font_check = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 11)
+        except Exception:
             self._font_sm = ImageFont.load_default()
             self._font_md = self._font_sm
             self._font_lg = self._font_sm
+            self._font_mono = self._font_sm
             self._font_sub = self._font_sm
+            self._font_check = self._font_sm
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def set_state(self, state, text=""):
         with self._lock:
+            prev = self.state
             self.state = state
             if text:
                 self.response_text = text
             self._anim_frame = 0
-            self._expression_start = time.time()
+            if state == STATE_BOOT:
+                self._boot_start = time.time()
 
-        # Set expression targets based on state
+        # Expression targets per state
         if state == STATE_IDLE:
-            self._target_smile = 0.15
-            self._target_brow = 0.0
             self._target_squint = 0.0
             self._target_mouth = 0.0
             self._target_pupil = 1.0
         elif state == STATE_LISTENING:
-            self._target_smile = 0.0
-            self._target_brow = 0.4  # raised brows = attentive
-            self._target_squint = -0.15  # eyes wider
+            self._target_squint = -0.12  # eyes slightly wider
             self._target_mouth = 0.0
-            self._target_pupil = 1.2  # dilated = focused
+            self._target_pupil = 1.15
         elif state == STATE_THINKING:
-            self._target_smile = -0.1
-            self._target_brow = 0.2
-            self._target_squint = 0.2  # slight squint
+            self._target_squint = 0.08
             self._target_mouth = 0.0
-            self._target_pupil = 0.8
+            self._target_pupil = 0.85
         elif state == STATE_SPEAKING:
-            self._target_smile = 0.2
-            self._target_brow = 0.1
             self._target_squint = 0.0
             self._target_pupil = 1.0
-            # Mouth animated in render loop
         elif state == STATE_CAMERA:
-            self._target_smile = 0.0
-            self._target_brow = 0.5  # surprised
-            self._target_squint = -0.2  # wide
-            self._target_mouth = 0.4  # slightly open
-            self._target_pupil = 0.7  # constrict
+            self._target_squint = -0.1
+            self._target_mouth = 0.0
+            self._target_pupil = 0.8
         elif state == STATE_ERROR:
-            self._target_smile = -0.4
-            self._target_brow = -0.3  # worried
-            self._target_squint = 0.1
-            self._target_mouth = 0.2
+            self._target_squint = 0.15
+            self._target_mouth = 0.0
             self._target_pupil = 0.9
-        elif state == STATE_HAPPY:
-            self._target_smile = 0.8
-            self._target_brow = 0.3
-            self._target_squint = 0.15  # happy squint
-            self._target_mouth = 0.3
-            self._target_pupil = 1.1
 
-        # Set RGB LED
+        # RGB LED (muted, professional)
         led_map = {
-            STATE_IDLE: (0, 60, 0),
-            STATE_LISTENING: (0, 50, 255),
-            STATE_THINKING: (255, 180, 0),
-            STATE_SPEAKING: (160, 0, 255),
-            STATE_CAMERA: (255, 255, 255),
-            STATE_ERROR: (255, 0, 0),
-            STATE_HAPPY: (0, 200, 100),
-            STATE_BOOT: (50, 50, 80),
+            STATE_IDLE: (0, 30, 0),
+            STATE_LISTENING: (0, 30, 80),
+            STATE_THINKING: (60, 50, 0),
+            STATE_SPEAKING: (0, 40, 80),
+            STATE_CAMERA: (40, 40, 50),
+            STATE_ERROR: (80, 15, 15),
+            STATE_BOOT: (20, 30, 50),
         }
-        r, g, b = led_map.get(state, (0, 40, 0))
+        r, g, b = led_map.get(state, (0, 20, 0))
         try:
             self.board.set_rgb(r, g, b)
-        except:
+        except Exception:
             pass
 
     def set_status(self, text):
         with self._lock:
             self.status_text = text
 
-    def _lerp(self, current, target, speed=0.15):
-        """Smooth interpolation."""
-        return current + (target - current) * speed
-
-    def _update_animation(self):
-        """Update all smooth animation values."""
-        now = time.time()
-
-        # Smooth expression transitions
-        self._smile = self._lerp(self._smile, self._target_smile, 0.12)
-        self._brow_raise = self._lerp(self._brow_raise, self._target_brow, 0.1)
-        self._lid_squint = self._lerp(self._lid_squint, self._target_squint, 0.12)
-        self._pupil_size = self._lerp(self._pupil_size, self._target_pupil, 0.1)
-        self._mouth_open = self._lerp(self._mouth_open, self._target_mouth, 0.2)
-
-        # Speaking mouth animation
-        if self.state == STATE_SPEAKING:
-            # Simulate speech with varied mouth shapes
-            t = self._anim_frame * 0.15
-            self._target_mouth = 0.15 + 0.35 * abs(math.sin(t * 2.7)) * abs(math.sin(t * 1.3))
-
-        # Auto-blink
-        if now > self._next_blink:
-            self._blink_amount = 1.0
-            self._next_blink = now + random.uniform(2.5, 6)
-            # Occasional double-blink
-            if random.random() < 0.2:
-                self._next_blink = now + 0.3
-        if self._blink_amount > 0:
-            self._blink_amount = max(0, self._blink_amount - 0.18)
-
-        # Saccades (micro eye movements)
-        if now > self._next_saccade:
-            if self.state == STATE_THINKING:
-                # Look up-right when thinking
-                self._saccade_x = random.uniform(0.15, 0.4)
-                self._saccade_y = random.uniform(-0.3, -0.1)
-            elif self.state == STATE_LISTENING:
-                # Look at speaker (center, slightly down)
-                self._saccade_x = random.uniform(-0.1, 0.1)
-                self._saccade_y = random.uniform(0.0, 0.15)
-            else:
-                self._saccade_x = random.uniform(-0.3, 0.3)
-                self._saccade_y = random.uniform(-0.2, 0.2)
-            self._next_saccade = now + random.uniform(1.0, 3.5)
-
-        # Idle mood shifts
-        if self.state == STATE_IDLE and now > self._idle_mood_timer:
-            mood = random.choice(["neutral", "slight_smile", "curious", "sleepy"])
-            if mood == "slight_smile":
-                self._target_smile = 0.3
-                self._target_brow = 0.1
-            elif mood == "curious":
-                self._target_smile = 0.0
-                self._target_brow = 0.35
-                self._target_squint = -0.1
-            elif mood == "sleepy":
-                self._target_smile = 0.1
-                self._target_squint = 0.2
-                self._target_brow = -0.1
-            else:
-                self._target_smile = 0.15
-                self._target_brow = 0.0
-                self._target_squint = 0.0
-            self._idle_mood_timer = now + random.uniform(5, 12)
-
     def render_frame(self):
         """Render one frame and push to display."""
-        # If we have a photo to display, render photo mode instead of face
         if self._photo_img is not None:
             self._render_photo_frame()
             return
@@ -270,272 +198,477 @@ class LcdUI:
             status = self.status_text
             self._anim_frame += 1
 
-        self._update_animation()
-
-        # Status bar — inside safe zone (below top chamfer)
-        if status and not resp:
-            draw.text((SAFE_LEFT + 4, SAFE_TOP), status, fill=TEXT_DIM, font=self._font_sm)
+        self._update_animation(state)
 
         if state == STATE_BOOT:
             self._draw_boot(draw)
         elif state == STATE_CAMERA:
             self._draw_camera_screen(draw)
         else:
-            # --- EYEBROWS ---
-            self._draw_brow(draw, LEFT_EYE_X, EYE_Y - EYE_H - 8, is_left=True)
-            self._draw_brow(draw, RIGHT_EYE_X, EYE_Y - EYE_H - 8, is_left=False)
+            # Status bar
+            self._draw_status_bar(draw, state, status)
 
-            # --- EYES ---
-            accent = {
-                STATE_LISTENING: BLUE_ACCENT,
-                STATE_THINKING: YELLOW_ACCENT,
-                STATE_SPEAKING: PURPLE_ACCENT,
-                STATE_ERROR: RED_ACCENT,
-                STATE_HAPPY: GREEN_ACCENT,
-            }.get(state, HIGHLIGHT)
+            # Eyes
+            self._draw_eye(draw, LEFT_EYE_X, EYE_Y)
+            self._draw_eye(draw, RIGHT_EYE_X, EYE_Y)
 
-            self._draw_eye(draw, LEFT_EYE_X, EYE_Y, self._saccade_x, self._saccade_y, accent)
-            self._draw_eye(draw, RIGHT_EYE_X, EYE_Y, self._saccade_x, self._saccade_y, accent)
+            # Mouth
+            self._draw_mouth(draw, state)
 
-            # --- MOUTH ---
-            self._draw_mouth(draw)
-
-            # --- State indicators (below mouth) ---
+            # State-specific indicators
             if state == STATE_LISTENING:
-                self._draw_listening_indicator(draw)
+                self._draw_listening_ring(draw)
             elif state == STATE_THINKING:
-                self._draw_thinking_indicator(draw)
+                self._draw_thinking_dots(draw)
+            elif state == STATE_SPEAKING:
+                self._draw_speaking_pulse(draw)
 
-        # Response text OR mode bar — text takes priority when present
-        if resp and state not in (STATE_BOOT, STATE_CAMERA):
-            # Response text gets full area below face — no mode bar competing
-            self._draw_response_text(draw, resp)
-        else:
-            # Mode bar only when no text displayed
-            self._draw_mode_bar(draw, state)
+            # Response text OR nothing (clean idle)
+            if resp:
+                self._draw_response_text(draw, resp)
 
-        # Push to display
         self._send_to_display(img)
 
-    def _draw_eye(self, draw, cx, cy, pox, poy, accent):
-        """Draw one expressive eye."""
-        # Eye dimensions with squint
+    def show_captured_image(self, img_path):
+        """Load captured photo for display during analysis/response."""
+        try:
+            from PIL import Image as PILImage
+            photo = PILImage.open(img_path).convert('RGB')
+            display_h = 170
+            photo_ratio = photo.width / photo.height
+            display_ratio = WIDTH / display_h
+            if photo_ratio > display_ratio:
+                new_h = display_h
+                new_w = int(display_h * photo_ratio)
+            else:
+                new_w = WIDTH
+                new_h = int(WIDTH / photo_ratio)
+            photo = photo.resize((new_w, new_h), PILImage.LANCZOS)
+            left = (new_w - WIDTH) // 2
+            top = (new_h - display_h) // 2
+            self._photo_img = photo.crop((left, top, left + WIDTH, top + display_h))
+            self._photo_text = "Analyzing..."
+            self._last_buf = None
+        except Exception:
+            pass
+
+    def set_photo_text(self, text):
+        self._photo_text = text
+        self._last_buf = None
+
+    def clear_photo(self):
+        self._photo_img = None
+        self._photo_text = ""
+        self._last_buf = None
+
+    def cleanup(self):
+        self._running = False
+        try:
+            self.board.set_rgb(0, 0, 0)
+            self.board.set_backlight(0)
+            self.board.cleanup()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Animation engine
+    # ------------------------------------------------------------------
+
+    def _lerp(self, current, target, speed=0.15):
+        return current + (target - current) * speed
+
+    def _update_animation(self, state):
+        now = time.time()
+
+        # Smooth expression transitions
+        self._lid_squint = self._lerp(self._lid_squint, self._target_squint, 0.12)
+        self._pupil_size = self._lerp(self._pupil_size, self._target_pupil, 0.1)
+        self._mouth_open = self._lerp(self._mouth_open, self._target_mouth, 0.18)
+
+        # Saccade interpolation (smooth eye movement)
+        self._saccade_x = self._lerp(self._saccade_x, self._saccade_target_x, 0.12)
+        self._saccade_y = self._lerp(self._saccade_y, self._saccade_target_y, 0.12)
+
+        # Speaking mouth animation
+        if state == STATE_SPEAKING:
+            t = self._anim_frame * 0.15
+            self._target_mouth = 0.1 + 0.3 * abs(math.sin(t * 2.5)) * abs(math.sin(t * 1.1))
+
+        # Auto-blink
+        if now > self._next_blink:
+            self._blink_amount = 1.0
+            self._next_blink = now + random.uniform(2.5, 6.0)
+            if random.random() < 0.15:
+                self._next_blink = now + 0.3  # double blink
+        if self._blink_amount > 0:
+            self._blink_amount = max(0, self._blink_amount - 0.2)
+
+        # Saccade targets (small, subtle)
+        if now > self._next_saccade:
+            if state == STATE_THINKING:
+                self._saccade_target_x = random.uniform(0.1, 0.25)
+                self._saccade_target_y = random.uniform(-0.2, -0.05)
+            elif state == STATE_LISTENING:
+                self._saccade_target_x = random.uniform(-0.08, 0.08)
+                self._saccade_target_y = random.uniform(-0.02, 0.1)
+            else:
+                self._saccade_target_x = random.uniform(-0.15, 0.15)
+                self._saccade_target_y = random.uniform(-0.1, 0.1)
+            self._next_saccade = now + random.uniform(1.2, 3.5)
+
+        # Breathing phase (for idle highlight animation)
+        self._breathing_phase += 0.04
+
+    # ------------------------------------------------------------------
+    # Drawing: Boot sequence
+    # ------------------------------------------------------------------
+
+    def _draw_boot(self, draw):
+        frame = self._anim_frame
+
+        # Phase 1 (frames 1-5): "SITEEYE" fades in
+        if frame <= 5:
+            alpha = min(1.0, frame / 5.0)
+            c = self._fade_color(TEXT_PRIMARY, alpha)
+            # Center "SITEEYE" monospace bold
+            text = "SITEEYE"
+            bbox = draw.textbbox((0, 0), text, font=self._font_mono)
+            tw = bbox[2] - bbox[0]
+            tx = (WIDTH - tw) // 2
+            draw.text((tx, 110), text, fill=c, font=self._font_mono)
+
+        # Phase 2 (frames 6-15): Title stays + progress bar fills
+        elif frame <= 15:
+            # Title fully visible
+            text = "SITEEYE"
+            bbox = draw.textbbox((0, 0), text, font=self._font_mono)
+            tw = bbox[2] - bbox[0]
+            tx = (WIDTH - tw) // 2
+            draw.text((tx, 110), text, fill=TEXT_PRIMARY, font=self._font_mono)
+
+            # Progress bar
+            bar_w = 160
+            bar_h = 3
+            bar_x = (WIDTH - bar_w) // 2
+            bar_y = 148
+            progress = (frame - 5) / 10.0
+            # Bar track
+            draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
+                                   radius=1, fill=(25, 35, 50))
+            # Bar fill
+            fill_w = int(bar_w * progress)
+            if fill_w > 2:
+                draw.rounded_rectangle([bar_x, bar_y, bar_x + fill_w, bar_y + bar_h],
+                                       radius=1, fill=ACCENT)
+
+        # Phase 3 (frames 16-25): Subtitle fades in, bar complete
+        elif frame <= 25:
+            # Title
+            text = "SITEEYE"
+            bbox = draw.textbbox((0, 0), text, font=self._font_mono)
+            tw = bbox[2] - bbox[0]
+            tx = (WIDTH - tw) // 2
+            draw.text((tx, 110), text, fill=TEXT_PRIMARY, font=self._font_mono)
+
+            # Full progress bar
+            bar_w = 160
+            bar_h = 3
+            bar_x = (WIDTH - bar_w) // 2
+            bar_y = 148
+            draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
+                                   radius=1, fill=ACCENT)
+
+            # Subtitle fading in
+            sub_alpha = min(1.0, (frame - 15) / 8.0)
+            sub_c = self._fade_color(TEXT_DIM, sub_alpha)
+            sub_text = "v2.0 | AI-POWERED FIELD ASSISTANT"
+            bbox2 = draw.textbbox((0, 0), sub_text, font=self._font_sub)
+            sw = bbox2[2] - bbox2[0]
+            sx = (WIDTH - sw) // 2
+            draw.text((sx, 158), sub_text, fill=sub_c, font=self._font_sub)
+
+        # Phase 4 (frames 26-40): System checks appear sequentially
+        else:
+            # Title
+            text = "SITEEYE"
+            bbox = draw.textbbox((0, 0), text, font=self._font_mono)
+            tw = bbox[2] - bbox[0]
+            tx = (WIDTH - tw) // 2
+            draw.text((tx, 110), text, fill=TEXT_PRIMARY, font=self._font_mono)
+
+            # Full progress bar
+            bar_w = 160
+            bar_h = 3
+            bar_x = (WIDTH - bar_w) // 2
+            bar_y = 148
+            draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
+                                   radius=1, fill=ACCENT)
+
+            # Subtitle fully visible
+            sub_text = "v2.0 | AI-POWERED FIELD ASSISTANT"
+            bbox2 = draw.textbbox((0, 0), sub_text, font=self._font_sub)
+            sw = bbox2[2] - bbox2[0]
+            sx = (WIDTH - sw) // 2
+            draw.text((sx, 158), sub_text, fill=TEXT_DIM, font=self._font_sub)
+
+            # System checks (each appears 3 frames apart)
+            checks = [
+                ("Camera", 26),
+                ("Audio", 30),
+                ("Network", 34),
+            ]
+            check_y = 185
+            for i, (label, appear_frame) in enumerate(checks):
+                if frame >= appear_frame:
+                    alpha = min(1.0, (frame - appear_frame) / 3.0)
+                    c = self._fade_color(STATUS_GREEN, alpha)
+                    tc = self._fade_color(TEXT_DIM, alpha)
+                    check_text = f"  {label}"
+                    # Checkmark
+                    cx = 60
+                    ty = check_y + i * 16
+                    draw.text((cx, ty), "\u2713", fill=c, font=self._font_check)
+                    draw.text((cx + 14, ty), label, fill=tc, font=self._font_check)
+
+    # ------------------------------------------------------------------
+    # Drawing: Status bar
+    # ------------------------------------------------------------------
+
+    def _draw_status_bar(self, draw, state, status):
+        y = SAFE_TOP + 2
+
+        # Status dot (left side)
+        dot_x = SAFE_LEFT + 6
+        dot_y = y + 5
+        dot_r = 3
+        if state == STATE_ERROR:
+            dot_color = STATUS_RED
+        elif state in (STATE_THINKING, STATE_CAMERA):
+            dot_color = STATUS_YELLOW
+        elif state in (STATE_LISTENING, STATE_SPEAKING):
+            dot_color = STATUS_BLUE
+        else:
+            dot_color = STATUS_GREEN
+        draw.ellipse([dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r],
+                     fill=dot_color)
+
+        # Status text next to dot
+        if status:
+            draw.text((dot_x + dot_r + 5, y + 1), status, fill=TEXT_DIM, font=self._font_sm)
+
+        # "SiteEye" wordmark (right side)
+        mark = "SiteEye"
+        bbox = draw.textbbox((0, 0), mark, font=self._font_sm)
+        mw = bbox[2] - bbox[0]
+        draw.text((SAFE_RIGHT - mw - 4, y + 1), mark, fill=TEXT_DIM, font=self._font_sm)
+
+        # Separator line
+        sep_y = y + 16
+        draw.line([(SAFE_LEFT, sep_y), (SAFE_RIGHT, sep_y)], fill=SEPARATOR_COLOR, width=1)
+
+    # ------------------------------------------------------------------
+    # Drawing: Eyes
+    # ------------------------------------------------------------------
+
+    def _draw_eye(self, draw, cx, cy):
         w = EYE_W
-        h = int(EYE_H * (1.0 - abs(self._lid_squint) * 0.3))
-        if self._lid_squint < 0:  # wide open
-            h = int(EYE_H * (1.0 - self._lid_squint * 0.25))
+        h = int(EYE_H * (1.0 - abs(self._lid_squint) * 0.25))
+        if self._lid_squint < 0:
+            h = int(EYE_H * (1.0 - self._lid_squint * 0.2))
 
         x1 = cx - w
         y1 = cy - h
         x2 = cx + w
         y2 = cy + h
 
-        # Eyeball
-        draw.rounded_rectangle([x1, y1, x2, y2], radius=CORNER_R, fill=EYE_WHITE)
+        # Eye shape — rounded rectangle with subtle edge gradient
+        # Outer slightly gray
+        draw.rounded_rectangle([x1 - 1, y1 - 1, x2 + 1, y2 + 1],
+                               radius=EYE_CORNER_R + 1, fill=EYE_EDGE)
+        # Inner white fill
+        draw.rounded_rectangle([x1, y1, x2, y2],
+                               radius=EYE_CORNER_R, fill=EYE_WHITE)
 
-        # Pupil with size variation
+        # Pupil
         pr = int(PUPIL_R * self._pupil_size)
-        px = cx + int(pox * w * 0.4)
-        py = cy + int(poy * h * 0.35)
-        draw.ellipse([px - pr, py - pr, px + pr, py + pr], fill=PUPIL)
+        px = cx + int(self._saccade_x * w * 0.35)
+        py = cy + int(self._saccade_y * h * 0.3)
+        draw.ellipse([px - pr, py - pr, px + pr, py + pr], fill=PUPIL_COLOR)
 
-        # Inner pupil (darker center for depth)
+        # Darker center
         ipr = max(2, pr // 2)
-        draw.ellipse([px - ipr, py - ipr, px + ipr, py + ipr], fill=(10, 10, 20))
+        draw.ellipse([px - ipr, py - ipr, px + ipr, py + ipr], fill=PUPIL_CENTER)
 
-        # Highlight reflection (two dots for life)
-        hx, hy = px - 4, py - 4
-        draw.ellipse([hx - 3, hy - 3, hx + 3, hy + 3], fill=(255, 255, 255))
-        # Secondary smaller highlight
-        h2x, h2y = px + 3, py + 2
-        draw.ellipse([h2x - 1, h2y - 1, h2x + 1, h2y + 1], fill=accent)
+        # Single bright highlight dot
+        hx = px - 3
+        hy = py - 3
+        # Breathing animation for idle — highlight subtly pulses
+        hr = 2
+        if self.state == STATE_IDLE:
+            breath = 0.8 + 0.2 * math.sin(self._breathing_phase)
+            hr = max(1, int(2 * breath))
+        draw.ellipse([hx - hr, hy - hr, hx + hr, hy + hr], fill=HIGHLIGHT_DOT)
 
-        # Eyelid masking (blink + squint)
+        # Eyelid masking (blink)
         blink = self._blink_amount
-        top_close = max(0, self._lid_squint * 0.5 + blink * 0.5)
+        top_close = max(0, max(self._lid_squint, 0) * 0.4 + blink * 0.5)
         bot_close = max(0, blink * 0.4)
 
         if top_close > 0:
             lid_y = y1 + int(top_close * (h * 2))
-            draw.rounded_rectangle([x1 - 2, y1 - 6, x2 + 2, min(lid_y, y2)],
-                                    radius=CORNER_R, fill=BG)
+            draw.rounded_rectangle([x1 - 3, y1 - 8, x2 + 3, min(lid_y, y2)],
+                                   radius=EYE_CORNER_R + 2, fill=BG)
         if bot_close > 0:
             lid_y = y2 - int(bot_close * (h * 2))
-            draw.rounded_rectangle([x1 - 2, max(lid_y, y1), x2 + 2, y2 + 6],
-                                    radius=CORNER_R, fill=BG)
+            draw.rounded_rectangle([x1 - 3, max(lid_y, y1), x2 + 3, y2 + 8],
+                                   radius=EYE_CORNER_R + 2, fill=BG)
 
-        # Happy squint (curved bottom lid) when smiling big
-        if self._smile > 0.4:
-            squint_h = int((self._smile - 0.4) * h * 0.8)
-            for dx in range(-w, w + 1):
-                curve = int(squint_h * (1 - (dx / w) ** 2))
-                if curve > 0:
-                    sx = cx + dx
-                    sy = y2 - curve
-                    draw.rectangle([sx, sy, sx, y2 + 2], fill=BG)
+    # ------------------------------------------------------------------
+    # Drawing: Mouth
+    # ------------------------------------------------------------------
 
-    def _draw_brow(self, draw, cx, cy, is_left):
-        """Draw one eyebrow."""
-        brow_w = EYE_W - 4
-        raise_amt = self._brow_raise
-
-        # Inner and outer y positions
-        inner_y = cy - int(raise_amt * 8)
-        outer_y = cy - int(raise_amt * 4)
-
-        if raise_amt < 0:  # angry — inner goes down
-            inner_y = cy - int(raise_amt * 6)
-            outer_y = cy + int(abs(raise_amt) * 3)
-
-        if is_left:
-            pts = [(cx - brow_w, outer_y), (cx + brow_w // 2, inner_y)]
-        else:
-            pts = [(cx - brow_w // 2, inner_y), (cx + brow_w, outer_y)]
-
-        draw.line(pts, fill=BROW_COLOR, width=3)
-
-    def _draw_mouth(self, draw):
-        """Draw expressive mouth."""
+    def _draw_mouth(self, draw, state):
         cx = MOUTH_CX
         cy = MOUTH_Y
-        mouth_w = 28 + int(self._mouth_open * 12)
-        open_h = int(self._mouth_open * 16)
-        smile_curve = int(self._smile * 12)
+        mouth_w = 22
+        open_h = int(self._mouth_open * 14)
 
-        if self._mouth_open < 0.08:
-            # Closed mouth — just a curved line
+        if self._mouth_open < 0.06:
+            # Closed — subtle smile curve
             pts = []
             for i in range(21):
                 t = i / 20.0
                 x = cx - mouth_w + int(t * mouth_w * 2)
-                # Quadratic curve for smile/frown
-                progress = (t - 0.5) * 2  # -1 to 1
-                y = cy - int(smile_curve * (1 - progress ** 2))
+                progress = (t - 0.5) * 2
+                # Gentle upward curve
+                curve = 3.0 * (1 - progress ** 2)
+                y = cy - int(curve)
                 pts.append((x, y))
             if len(pts) > 1:
-                draw.line(pts, fill=MOUTH_COLOR, width=2)
+                draw.line(pts, fill=MOUTH_LINE, width=2)
         else:
-            # Open mouth — elliptical shape
-            top_y = cy - open_h // 3
-            bot_y = cy + open_h * 2 // 3 + smile_curve
+            # Open — clean oval/pill shape
+            ow = mouth_w + int(self._mouth_open * 8)
+            oh = max(4, open_h)
+            top_y = cy - oh // 3
+            bot_y = cy + oh * 2 // 3
 
-            # Outer mouth shape
-            mouth_bbox = [cx - mouth_w, top_y - 2, cx + mouth_w, bot_y + 2]
-            draw.rounded_rectangle(mouth_bbox, radius=mouth_w // 2, fill=MOUTH_INSIDE)
-            draw.rounded_rectangle(mouth_bbox, radius=mouth_w // 2, outline=MOUTH_COLOR, width=2)
+            # Pill shape
+            bbox = [cx - ow, top_y, cx + ow, bot_y]
+            draw.rounded_rectangle(bbox, radius=ow // 2, fill=MOUTH_FILL)
+            draw.rounded_rectangle(bbox, radius=ow // 2, outline=MOUTH_OUTLINE, width=1)
 
-            # Tongue hint when mouth is wide open
-            if self._mouth_open > 0.5:
-                tongue_w = mouth_w // 2
-                tongue_y = bot_y - 4
-                draw.ellipse([cx - tongue_w, tongue_y - 3, cx + tongue_w, tongue_y + 5],
-                             fill=(180, 80, 100))
+    # ------------------------------------------------------------------
+    # Drawing: State indicators
+    # ------------------------------------------------------------------
 
-            # Teeth hint at top
-            if open_h > 6:
-                teeth_h = min(4, open_h // 3)
-                draw.rectangle([cx - mouth_w + 6, top_y, cx + mouth_w - 6, top_y + teeth_h],
-                               fill=(240, 240, 245))
-
-    def _draw_listening_indicator(self, draw):
-        """Audio level visualization for listening state."""
-        y = 178
+    def _draw_listening_ring(self, draw):
+        """Subtle pulsing blue ring around face area."""
         frame = self._anim_frame
-        # Pulsing bars like an audio meter
-        for i in range(7):
-            x = 90 + i * 10
-            h = 3 + int(5 * abs(math.sin(frame * 0.25 + i * 0.8)))
-            color_intensity = 100 + int(155 * abs(math.sin(frame * 0.2 + i * 0.5)))
-            c = (0, min(255, color_intensity // 2), min(255, color_intensity))
-            draw.rectangle([x, y - h, x + 5, y + h], fill=c)
+        pulse = 0.4 + 0.6 * abs(math.sin(frame * 0.12))
+        alpha = int(pulse * 60)
+        c = (ACCENT[0], ACCENT[1], ACCENT[2])
+        # Faded concentric ring
+        ring_cx = 120
+        ring_cy = 135
+        ring_r = 68 + int(4 * math.sin(frame * 0.1))
+        # Draw ring as arc approximation (thin ellipse outline)
+        c_faded = tuple(max(0, min(255, int(v * pulse * 0.5))) for v in c)
+        draw.ellipse([ring_cx - ring_r, ring_cy - ring_r,
+                      ring_cx + ring_r, ring_cy + ring_r],
+                     outline=c_faded, width=2)
 
-    def _draw_thinking_indicator(self, draw):
-        """Animated thinking dots."""
-        y = 178
+    def _draw_thinking_dots(self, draw):
+        """Animated dots below face (...)."""
+        y = 190
         frame = self._anim_frame
-        active = (frame // 6) % 3
         for i in range(3):
             x = 108 + i * 12
-            if i == active:
-                r = 4
-                c = YELLOW_ACCENT
-            else:
-                r = 3
-                c = (80, 65, 0)
-            draw.ellipse([x - r, y - r, x + r, y + r], fill=c)
+            # Bounce animation offset per dot
+            bounce = math.sin((frame * 0.2) - i * 0.8)
+            dy = int(bounce * 3) if bounce > 0 else 0
+            # Fade cycle
+            brightness = 0.3 + 0.7 * max(0, math.sin((frame * 0.2) - i * 0.8))
+            c = tuple(int(v * brightness) for v in ACCENT)
+            r = 3
+            draw.ellipse([x - r, y - r - dy, x + r, y + r - dy], fill=c)
 
-    def _draw_boot(self, draw):
-        """Boot animation screen."""
+    def _draw_speaking_pulse(self, draw):
+        """Subtle waveform pulse below face."""
+        y = 190
         frame = self._anim_frame
+        cx = 120
+        wave_w = 50
+        for i in range(wave_w):
+            x = cx - wave_w // 2 + i
+            # Sine wave with mouth-sync amplitude
+            amp = self._mouth_open * 4
+            val = amp * math.sin(i * 0.3 + frame * 0.3)
+            brightness = 0.3 + 0.4 * abs(math.sin(i * 0.15 + frame * 0.1))
+            c = tuple(int(v * brightness) for v in ACCENT)
+            if abs(val) > 0.5:
+                h = max(1, int(abs(val)))
+                draw.line([(x, y - h), (x, y + h)], fill=c, width=1)
 
-        # Fade in effect
-        alpha = min(1.0, frame / 15.0)
-        text_c = tuple(int(v * alpha) for v in HIGHLIGHT)
-        sub_c = tuple(int(v * alpha) for v in TEXT_DIM)
-
-        draw.text((55, 100), "SiteEye", fill=text_c, font=self._font_lg)
-        draw.text((90, 135), "v2.0", fill=sub_c, font=self._font_sub)
-
-        # Loading bar
-        bar_w = 140
-        bar_x = (WIDTH - bar_w) // 2
-        bar_y = 178
-        progress = min(1.0, frame / 20.0)
-        draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + 6],
-                                radius=3, fill=(30, 30, 50))
-        fill_w = int(bar_w * progress)
-        if fill_w > 0:
-            draw.rounded_rectangle([bar_x, bar_y, bar_x + fill_w, bar_y + 6],
-                                    radius=3, fill=HIGHLIGHT)
-
-        draw.text((72, 205), "Booting...", fill=sub_c, font=self._font_sub)
+    # ------------------------------------------------------------------
+    # Drawing: Camera screen
+    # ------------------------------------------------------------------
 
     def _draw_camera_screen(self, draw):
-        """Camera capture screen with countdown feel."""
         frame = self._anim_frame
 
-        # Flash effect on first frames
-        if frame < 3:
-            draw.rectangle([0, 0, WIDTH, HEIGHT], fill=(255, 255, 255))
-            return
+        # Clean viewfinder overlay
+        # Crosshair
+        cx, cy = 120, 120
+        line_len = 20
+        gap = 8
+        c = ACCENT_DIM
 
-        # Camera icon — centered on full display
-        draw.ellipse([80, 80, 160, 160], outline=HIGHLIGHT, width=3)
-        draw.ellipse([98, 98, 142, 142], outline=(80, 80, 120), width=2)
-        draw.ellipse([110, 110, 130, 130], fill=(40, 40, 80))
-        draw.ellipse([117, 117, 123, 123], fill=HIGHLIGHT)
+        # Horizontal crosshair
+        draw.line([(cx - line_len - gap, cy), (cx - gap, cy)], fill=c, width=1)
+        draw.line([(cx + gap, cy), (cx + line_len + gap, cy)], fill=c, width=1)
+        # Vertical crosshair
+        draw.line([(cx, cy - line_len - gap), (cx, cy - gap)], fill=c, width=1)
+        draw.line([(cx, cy + gap), (cx, cy + line_len + gap)], fill=c, width=1)
 
-        draw.text((70, 175), "Capturing...", fill=TEXT_PRIMARY, font=self._font_sub)
+        # Corner brackets
+        bracket_len = 18
+        bracket_inset = 35
+        corners = [
+            (cx - bracket_inset, cy - bracket_inset, 1, 1),
+            (cx + bracket_inset, cy - bracket_inset, -1, 1),
+            (cx - bracket_inset, cy + bracket_inset, 1, -1),
+            (cx + bracket_inset, cy + bracket_inset, -1, -1),
+        ]
+        for bx, by, dx, dy in corners:
+            draw.line([(bx, by), (bx + bracket_len * dx, by)], fill=ACCENT, width=2)
+            draw.line([(bx, by), (bx, by + bracket_len * dy)], fill=ACCENT, width=2)
 
-    def _draw_mode_bar(self, draw, state):
-        """Bottom mode indicator."""
-        mode_map = {
-            STATE_IDLE: ("● Ready", GREEN_ACCENT),
-            STATE_LISTENING: ("● Listening...", BLUE_ACCENT),
-            STATE_THINKING: ("● Thinking...", YELLOW_ACCENT),
-            STATE_SPEAKING: ("● Speaking...", PURPLE_ACCENT),
-            STATE_CAMERA: ("● Camera", HIGHLIGHT),
-            STATE_ERROR: ("● Error", RED_ACCENT),
-            STATE_HAPPY: ("● :)", GREEN_ACCENT),
-        }
-        text, color = mode_map.get(state, ("", TEXT_DIM))
-        if text:
-            draw.text((SAFE_LEFT + 4, SAFE_BOT - 4), text, fill=color, font=self._font_sm)
+        # "Capturing..." text
+        text = "Capturing..."
+        bbox = draw.textbbox((0, 0), text, font=self._font_md)
+        tw = bbox[2] - bbox[0]
+        draw.text(((WIDTH - tw) // 2, 195), text, fill=TEXT_DIM, font=self._font_md)
+
+    # ------------------------------------------------------------------
+    # Drawing: Response text
+    # ------------------------------------------------------------------
 
     def _draw_response_text(self, draw, text):
-        """Draw response text in the lower area — large, readable, no overlap."""
-        x = SAFE_LEFT
-        y_start = 180
-        max_w = SAFE_RIGHT - SAFE_LEFT
-        line_h = 18
-        max_lines = 5  # fits between face and bottom safe zone
+        panel_x = SAFE_LEFT + 2
+        panel_x2 = SAFE_RIGHT - 2
+        y_start = 195
+        panel_y2 = SAFE_BOT
+        line_h = 16
+        max_lines = 5
+        font = self._font_md
 
-        try:
-            font = self._font_md
-        except:
-            font = ImageFont.load_default()
+        # Dark panel with rounded corners
+        draw.rounded_rectangle([panel_x, y_start - 4, panel_x2, panel_y2],
+                               radius=6, fill=BG_PANEL)
 
         # Word wrap
+        max_w = panel_x2 - panel_x - 12
         words = text.split()
         lines = []
         line = ""
@@ -551,50 +684,79 @@ class LcdUI:
         if line:
             lines.append(line)
 
-        # Show last N lines (scrolled to bottom for long text)
         visible = lines[-max_lines:]
-
-        # Dim background behind text for readability
-        text_area_h = len(visible) * line_h + 8
-        draw.rectangle([0, y_start - 4, WIDTH, y_start + text_area_h],
-                        fill=(8, 8, 20))
+        text_x = panel_x + 6
+        text_y = y_start + 2
 
         for i, ln in enumerate(visible):
-            draw.text((x, y_start + i * line_h), ln, fill=TEXT_PRIMARY, font=font)
+            draw.text((text_x, text_y + i * line_h), ln, fill=TEXT_PRIMARY, font=font)
 
-        # If text is truncated, show scroll indicator
+        # Scroll indicator if truncated
         if len(lines) > max_lines:
-            draw.text((SAFE_RIGHT - 20, y_start - 2), "...", fill=TEXT_DIM, font=self._font_sm)
+            # Small up arrow or dots
+            draw.text((panel_x2 - 14, y_start), "\u2191", fill=TEXT_DIM, font=self._font_sm)
 
-    def _draw_wrapped_text(self, draw, text, x, y, max_w, font, color):
-        """Generic word-wrap (kept for compatibility)."""
-        words = text.split()
-        lines = []
-        line = ""
-        for w in words:
-            test = f"{line} {w}".strip()
-            bbox = draw.textbbox((0, 0), test, font=font)
-            if bbox[2] - bbox[0] > max_w:
-                if line:
-                    lines.append(line)
-                line = w
-            else:
-                line = test
-        if line:
-            lines.append(line)
-        visible = lines[-5:]
-        for i, ln in enumerate(visible):
-            draw.text((x, y + i * 17), ln, fill=color, font=font)
+    # ------------------------------------------------------------------
+    # Drawing: Photo mode
+    # ------------------------------------------------------------------
+
+    def _render_photo_frame(self):
+        img = Image.new('RGB', (WIDTH, HEIGHT), BG)
+
+        if self._photo_img is not None:
+            img.paste(self._photo_img, (0, 0))
+
+        draw = ImageDraw.Draw(img)
+        photo_h = 170
+
+        # Accent border around photo
+        draw.rectangle([0, 0, WIDTH - 1, photo_h - 1], outline=ACCENT_DIM, width=1)
+
+        # Dark panel below photo
+        draw.rounded_rectangle([4, photo_h + 2, WIDTH - 4, HEIGHT - 4],
+                               radius=6, fill=BG_PANEL)
+
+        text = self._photo_text
+        if text:
+            max_w = SAFE_RIGHT - SAFE_LEFT - 8
+            y_start = photo_h + 8
+            line_h = 16
+            max_lines = 6
+            font = self._font_md
+
+            # Check for "Analyzing..." to add animated dots
+            if text == "Analyzing...":
+                dots = "." * (1 + (self._anim_frame // 4) % 3)
+                text = "Analyzing" + dots
+
+            words = text.split()
+            lines = []
+            line = ""
+            for w in words:
+                test = f"{line} {w}".strip()
+                bbox = draw.textbbox((0, 0), test, font=font)
+                if bbox[2] - bbox[0] > max_w:
+                    if line:
+                        lines.append(line)
+                    line = w
+                else:
+                    line = test
+            if line:
+                lines.append(line)
+
+            visible = lines[-max_lines:]
+            for i, ln in enumerate(visible):
+                draw.text((SAFE_LEFT + 4, y_start + i * line_h), ln,
+                          fill=TEXT_PRIMARY, font=font)
+
+        self._send_to_display(img)
+
+    # ------------------------------------------------------------------
+    # Display output
+    # ------------------------------------------------------------------
 
     def _send_to_display(self, img):
-        """Convert PIL image to RGB565 and push to Whisplay LCD.
-
-        Uses double-buffer comparison: only sends full frame when content
-        actually changed. The WhisPlay SPI runs at 100MHz so a full 134KB
-        frame takes ~1.1ms on the wire, but Python overhead in preparing
-        the buffer is the real bottleneck. By caching the last buffer and
-        doing a fast bytes comparison, we skip identical frames entirely.
-        """
+        """Convert PIL image to RGB565 and push via SPI."""
         try:
             import numpy as np
             arr = np.array(img, dtype=np.uint16)
@@ -608,112 +770,25 @@ class LcdUI:
             buf[0::2] = data_hi.tobytes()
             buf[1::2] = data_lo.tobytes()
 
-            # Double-buffer: skip if frame is identical
             if hasattr(self, '_last_buf') and self._last_buf == buf:
                 return
             self._last_buf = bytes(buf)
 
-            # Send as bytes directly (avoid list() overhead on 134K items)
             self.board.set_window(0, 0, WIDTH - 1, HEIGHT - 1)
             self.board._send_data(buf)
         except ImportError:
             px = []
             for y in range(HEIGHT):
                 for x in range(WIDTH):
-                    r, g, b = img.getpixel((x, y))
-                    rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+                    rv, gv, bv = img.getpixel((x, y))
+                    rgb565 = ((rv & 0xF8) << 8) | ((gv & 0xFC) << 3) | (bv >> 3)
                     px.extend([(rgb565 >> 8) & 0xFF, rgb565 & 0xFF])
             self.board.draw_image(0, 0, WIDTH, HEIGHT, px)
 
-    def show_captured_image(self, img_path):
-        """Load a captured photo and hold it on screen during analysis/response."""
-        try:
-            from PIL import Image as PILImage
-            photo = PILImage.open(img_path).convert('RGB')
-            # Scale to fill width, fit in top portion of display
-            display_h = 170  # room for text below
-            photo_ratio = photo.width / photo.height
-            display_ratio = WIDTH / display_h
-            if photo_ratio > display_ratio:
-                new_h = display_h
-                new_w = int(display_h * photo_ratio)
-            else:
-                new_w = WIDTH
-                new_h = int(WIDTH / photo_ratio)
-            photo = photo.resize((new_w, new_h), PILImage.LANCZOS)
-            # Center crop
-            left = (new_w - WIDTH) // 2
-            top = (new_h - display_h) // 2
-            self._photo_img = photo.crop((left, top, left + WIDTH, top + display_h))
-            self._photo_text = "Analyzing..."
-            self._last_buf = None  # Force display refresh
-        except Exception as e:
-            pass
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-    def set_photo_text(self, text):
-        """Update the text shown below the photo."""
-        self._photo_text = text
-        self._last_buf = None
-
-    def clear_photo(self):
-        """Clear the photo overlay and return to face mode."""
-        self._photo_img = None
-        self._photo_text = ""
-        self._last_buf = None
-
-    def _render_photo_frame(self):
-        """Render photo + text below it. Called by render_frame when photo is set."""
-        img = Image.new('RGB', (WIDTH, HEIGHT), BG)
-
-        if self._photo_img is not None:
-            img.paste(self._photo_img, (0, 0))
-
-        draw = ImageDraw.Draw(img)
-        photo_h = 170
-
-        # Dark area below photo for text
-        draw.rectangle([0, photo_h, WIDTH, HEIGHT], fill=(6, 6, 16))
-
-        # Thin border around photo
-        draw.rectangle([0, 0, WIDTH - 1, photo_h - 1], outline=(40, 60, 80), width=1)
-
-        # Text below photo
-        text = self._photo_text
-        if text:
-            # Word wrap in the text area
-            max_w = SAFE_RIGHT - SAFE_LEFT
-            y_start = photo_h + 6
-            line_h = 16
-            max_lines = 6
-
-            words = text.split()
-            lines = []
-            line = ""
-            for w in words:
-                test = f"{line} {w}".strip()
-                bbox = draw.textbbox((0, 0), test, font=self._font_md)
-                if bbox[2] - bbox[0] > max_w:
-                    if line:
-                        lines.append(line)
-                    line = w
-                else:
-                    line = test
-            if line:
-                lines.append(line)
-
-            visible = lines[-max_lines:]
-            for i, ln in enumerate(visible):
-                draw.text((SAFE_LEFT, y_start + i * line_h), ln,
-                          fill=TEXT_PRIMARY, font=self._font_md)
-
-        self._send_to_display(img)
-
-    def cleanup(self):
-        """Turn off display and LED."""
-        self._running = False
-        try:
-            self.board.set_rgb(0, 0, 0)
-            self.board.set_backlight(0)
-            self.board.cleanup()
-        except:
-            pass
+    def _fade_color(self, color, alpha):
+        """Apply alpha fade to a color tuple (against black background)."""
+        return tuple(int(v * max(0.0, min(1.0, alpha))) for v in color)

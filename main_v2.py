@@ -4,7 +4,7 @@
 Full pipeline:
   - Button tap: voice recording → Whisper STT → Molt → TTS → speaker + LCD
   - Button hold (>1s): camera snap → GPT-4o vision → TTS → speaker + LCD
-  - LCD shows neural mesh face + response text
+  - LCD shows premium AI assistant face + response text
   - RGB LED indicates state
 
 Uses WhisPlayBoard's built-in button callbacks (no separate GPIO init).
@@ -31,7 +31,7 @@ from lcd_ui import LcdUI, STATE_IDLE, STATE_LISTENING, STATE_THINKING, STATE_SPE
 PROXY_URL = os.environ.get("SITEEYE_PROXY", "https://molted.tail4a98c5.ts.net")
 CAPTURE_WIDTH = 640
 CAPTURE_HEIGHT = 480
-MAX_RECORD_SECONDS = 15
+MAX_RECORD_SECONDS = 30
 BUTTON_HOLD_THRESHOLD = 1.0  # seconds for camera mode
 
 # Audio device
@@ -40,9 +40,12 @@ RECORD_FMT = "S16_LE"
 RECORD_RATE = "16000"
 RECORD_CHANNELS = "1"
 
-# Display target FPS — 6fps is smooth enough for expressions, minimizes SPI load
+# Display target FPS
 TARGET_FPS = 6
 FRAME_INTERVAL = 1.0 / TARGET_FPS
+
+# Boot animation frame count (matches lcd_ui boot sequence phases)
+BOOT_FRAMES = 45
 
 
 def log(msg):
@@ -58,29 +61,31 @@ class SiteEye:
         self._recording = False
         self._record_proc = None
         self._press_time = 0
-        self._busy = False  # prevent overlapping operations
+        self._busy = False
 
-        # Register button callbacks with WhisPlayBoard's built-in system
-        # The board already owns GPIO in BOARD mode and has edge detection set up.
+        # Register button callbacks
         self.board.button_press_callback = self._on_button_press
         self.board.button_release_callback = self._on_button_release
         log("Button registered via WhisPlayBoard callbacks")
 
-        # Set volume
+        # Set volume to max
         try:
-            subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Speaker", "90%"],
+            subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Speaker", "100%"],
+                           capture_output=True, timeout=5)
+            subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Speaker AC Volume", "5"],
+                           capture_output=True, timeout=5)
+            subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Speaker DC Volume", "5"],
                            capture_output=True, timeout=5)
             subprocess.run(["amixer", "-D", "hw:wm8960soundcard", "sset", "Capture", "80%"],
                            capture_output=True, timeout=5)
-        except:
+            log("Speaker volume set to max")
+        except Exception:
             pass
 
     def _on_button_press(self):
-        """Called by WhisPlayBoard when button is pressed (HIGH)."""
         self._press_time = time.time()
 
     def _on_button_release(self):
-        """Called by WhisPlayBoard when button is released (LOW)."""
         if self._busy:
             if self._recording:
                 self._stop_recording()
@@ -100,12 +105,11 @@ class SiteEye:
             return
         self._busy = True
 
-        log("🎙 Voice flow started")
+        log("\U0001f399 Voice flow started")
         self.ui.set_state(STATE_LISTENING)
 
         audio_path = "/tmp/siteeye_voice.wav"
         try:
-            # Start recording — set proc BEFORE setting _recording flag
             proc = subprocess.Popen(
                 ["arecord", "-D", AUDIO_DEV, "-f", RECORD_FMT, "-r", RECORD_RATE,
                  "-c", RECORD_CHANNELS, "-d", str(MAX_RECORD_SECONDS), audio_path],
@@ -140,7 +144,7 @@ class SiteEye:
         img_path = self._capture_photo()
 
         self.ui.set_state(STATE_THINKING)
-        log("🔄 Sending to proxy...")
+        log("\U0001f504 Sending to proxy...")
 
         try:
             files = {"audio": ("voice.wav", open(audio_path, "rb"), "audio/wav")}
@@ -152,7 +156,7 @@ class SiteEye:
             for f in files.values():
                 try:
                     f[1].close()
-                except:
+                except Exception:
                     pass
 
             if r.status_code == 200:
@@ -161,8 +165,8 @@ class SiteEye:
                 response = data.get("response", "")
                 audio_b64 = data.get("audio")
 
-                log(f"📝 You: {transcription}")
-                log(f"🤖 Molt: {response}")
+                log(f"\U0001f4dd You: {transcription}")
+                log(f"\U0001f916 Molt: {response}")
 
                 self.ui.set_state(STATE_SPEAKING, response)
 
@@ -175,11 +179,11 @@ class SiteEye:
                 time.sleep(3)
                 self.ui.response_text = ""
             else:
-                log(f"❌ Proxy error: {r.status_code}")
+                log(f"\u274c Proxy error: {r.status_code}")
                 self.ui.set_state(STATE_ERROR, f"Error {r.status_code}")
                 time.sleep(2)
         except Exception as e:
-            log(f"❌ {e}")
+            log(f"\u274c {e}")
             self.ui.set_state(STATE_ERROR, str(e)[:40])
             time.sleep(2)
 
@@ -187,7 +191,7 @@ class SiteEye:
             try:
                 if p:
                     os.remove(p)
-            except:
+            except Exception:
                 pass
 
         self.ui.set_state(STATE_IDLE)
@@ -199,22 +203,22 @@ class SiteEye:
             return
         self._busy = True
 
-        log("📷 Camera flow started")
+        log("\U0001f4f7 Camera flow started")
         self.ui.set_state(STATE_CAMERA)
         time.sleep(0.3)
 
         img_path = self._capture_photo()
         if not img_path:
-            log("❌ Camera failed")
+            log("\u274c Camera failed")
             self.ui.set_state(STATE_ERROR, "Camera failed")
             time.sleep(2)
             self.ui.set_state(STATE_IDLE)
             self._busy = False
             return
 
-        # Show captured image on LCD — stays visible through entire flow
+        # Show captured image on LCD
         self.ui.show_captured_image(img_path)
-        log("🔄 Sending to proxy for vision...")
+        log("\U0001f504 Sending to proxy for vision...")
 
         try:
             with open(img_path, "rb") as f:
@@ -226,41 +230,38 @@ class SiteEye:
             if r.status_code == 200:
                 data = r.json()
                 response = data.get("response", "No response")
-                log(f"🤖 {response}")
+                log(f"\U0001f916 {response}")
 
-                # Show response text below the photo (photo stays visible)
                 self.ui.set_photo_text(response)
 
-                # Speak the response
                 try:
                     tts_r = requests.post(f"{PROXY_URL}/tts",
                         json={"text": response}, timeout=60)
                     if tts_r.status_code == 200 and len(tts_r.content) > 100:
                         self._play_audio_raw(tts_r.content)
                     else:
-                        log(f"⚠️ TTS error: status={tts_r.status_code} len={len(tts_r.content)}")
+                        log(f"\u26a0\ufe0f TTS error: status={tts_r.status_code} len={len(tts_r.content)}")
                         time.sleep(3)
                 except Exception as e:
-                    log(f"⚠️ TTS failed: {e}")
+                    log(f"\u26a0\ufe0f TTS failed: {e}")
                     time.sleep(3)
 
                 # Keep photo + text visible briefly after speech
                 time.sleep(4)
             else:
-                log(f"❌ Vision error: {r.status_code}")
+                log(f"\u274c Vision error: {r.status_code}")
                 self.ui.set_photo_text(f"Error {r.status_code}")
                 time.sleep(3)
         except Exception as e:
-            log(f"❌ {e}")
+            log(f"\u274c {e}")
             self.ui.set_photo_text(str(e)[:40])
             time.sleep(3)
 
-        # Clear photo and return to face
         self.ui.clear_photo()
 
         try:
             os.remove(img_path)
-        except:
+        except Exception:
             pass
 
         self.ui.set_state(STATE_IDLE)
@@ -287,12 +288,11 @@ class SiteEye:
             self._record_proc.terminate()
             try:
                 self._record_proc.wait(timeout=2)
-            except:
+            except Exception:
                 self._record_proc.kill()
         self._record_proc = None
 
     def _play_audio_b64(self, audio_b64):
-        """Play base64-encoded WAV audio."""
         try:
             audio_bytes = base64.b64decode(audio_b64)
             self._play_audio_raw(audio_bytes)
@@ -300,7 +300,6 @@ class SiteEye:
             log(f"Playback error: {e}")
 
     def _play_audio_raw(self, audio_bytes):
-        """Play raw WAV bytes through speaker."""
         try:
             tmp_path = "/tmp/siteeye_tts.wav"
             with open(tmp_path, "wb") as f:
@@ -314,7 +313,6 @@ class SiteEye:
             log(f"Playback error: {e}")
 
     def _display_loop(self):
-        """Background loop rendering LCD at controlled framerate."""
         while self._running:
             frame_start = time.time()
             try:
@@ -322,14 +320,12 @@ class SiteEye:
             except Exception as e:
                 log(f"Display error: {e}")
 
-            # Rate limit to TARGET_FPS
             elapsed = time.time() - frame_start
             sleep_time = FRAME_INTERVAL - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
     def _keyboard_loop(self):
-        """Keyboard fallback for testing without button."""
         while self._running:
             try:
                 cmd = input("").strip().lower()
@@ -347,13 +343,12 @@ class SiteEye:
                 break
 
     def run(self):
-        log("═══ SiteEye v2 — Whisplay + IMX500 ═══")
+        log("\u2550\u2550\u2550 SiteEye v2 \u2014 Whisplay + IMX500 \u2550\u2550\u2550")
         log(f"Proxy: {PROXY_URL}")
 
-        # Boot
+        # Boot animation
         self.ui.set_state(STATE_BOOT)
-        # Render boot animation frames
-        for _ in range(35):
+        for _ in range(BOOT_FRAMES):
             frame_start = time.time()
             self.ui.render_frame()
             elapsed = time.time() - frame_start
@@ -364,13 +359,13 @@ class SiteEye:
         try:
             r = requests.get(f"{PROXY_URL}/health", timeout=5)
             if r.status_code == 200:
-                log("✅ Proxy connected")
+                log("\u2705 Proxy connected")
                 self.ui.set_status("Connected")
             else:
-                log("⚠️ Proxy unhealthy")
+                log("\u26a0\ufe0f Proxy unhealthy")
                 self.ui.set_status("Proxy error")
-        except:
-            log("⚠️ Proxy unreachable")
+        except Exception:
+            log("\u26a0\ufe0f Proxy unreachable")
             self.ui.set_status("Offline")
 
         self.ui.set_state(STATE_IDLE)
@@ -381,8 +376,8 @@ class SiteEye:
             try:
                 subprocess.run(["aplay", "-D", AUDIO_DEV, startup_wav],
                                capture_output=True, timeout=10)
-                log("🔊 Startup sound played")
-            except:
+                log("\U0001f50a Startup sound played")
+            except Exception:
                 pass
 
         # Start display loop
@@ -396,14 +391,14 @@ class SiteEye:
         if sys.stdin.isatty():
             try:
                 self._keyboard_loop()
-            except:
+            except Exception:
                 pass
         else:
-            log("Headless mode — button only")
+            log("Headless mode \u2014 button only")
             try:
                 while self._running:
                     time.sleep(1)
-            except:
+            except Exception:
                 pass
 
         log("Shutting down...")
