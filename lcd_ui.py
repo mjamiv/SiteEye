@@ -122,9 +122,9 @@ class LcdUI:
             self._font_sm = ImageFont.truetype(rc, 14)
             self._font_md = ImageFont.truetype(rc, 15)
             self._font_lg = ImageFont.truetype(rcb, 24)
-            self._font_mono = ImageFont.truetype(rcb, 40)     # Boot title
-            self._font_sub = ImageFont.truetype(rc, 12)
-            self._font_check = ImageFont.truetype(mono, 12)
+            self._font_mono = ImageFont.truetype(rcb, 48)     # Boot title — BIG
+            self._font_sub = ImageFont.truetype(rc, 14)       # Subtitle
+            self._font_check = ImageFont.truetype(rc, 14)     # System checks
         except Exception:
             self._font_sm = ImageFont.load_default()
             self._font_md = self._font_sm
@@ -393,109 +393,79 @@ class LcdUI:
     def _draw_boot(self, draw):
         frame = self._anim_frame
 
-        # Phase 1 (frames 1-5): "SITEEYE" fades in
-        if frame <= 5:
-            alpha = min(1.0, frame / 5.0)
-            c = self._fade_color(TEXT_PRIMARY, alpha)
-            # Center "SITEEYE" monospace bold
+        # Common: draw title (always centered, big)
+        def _draw_title(alpha=1.0):
             text = "SITEEYE"
+            c = self._fade_color(ACCENT, alpha) if alpha < 1.0 else ACCENT
             bbox = draw.textbbox((0, 0), text, font=self._font_mono)
             tw = bbox[2] - bbox[0]
             tx = (WIDTH - tw) // 2
-            draw.text((tx, 95), text, fill=c, font=self._font_mono)
+            draw.text((tx, 75), text, fill=c, font=self._font_mono)
 
-        # Phase 2 (frames 6-15): Title stays + progress bar fills
-        elif frame <= 15:
-            # Title fully visible
-            text = "SITEEYE"
-            bbox = draw.textbbox((0, 0), text, font=self._font_mono)
-            tw = bbox[2] - bbox[0]
-            tx = (WIDTH - tw) // 2
-            draw.text((tx, 95), text, fill=TEXT_PRIMARY, font=self._font_mono)
-
-            # Progress bar
-            bar_w = 160
-            bar_h = 3
+        def _draw_bar(progress):
+            bar_w = 180
+            bar_h = 4
             bar_x = (WIDTH - bar_w) // 2
-            bar_y = 145
-            progress = (frame - 5) / 10.0
-            # Bar track
+            bar_y = 135
             draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
-                                   radius=1, fill=(25, 35, 50))
-            # Bar fill
-            fill_w = int(bar_w * progress)
+                                   radius=2, fill=(25, 25, 20))
+            fill_w = int(bar_w * min(1.0, progress))
             if fill_w > 2:
                 draw.rounded_rectangle([bar_x, bar_y, bar_x + fill_w, bar_y + bar_h],
-                                       radius=1, fill=ACCENT)
+                                       radius=2, fill=ACCENT)
 
-        # Phase 3 (frames 16-25): Subtitle fades in, bar complete
-        elif frame <= 25:
-            # Title
-            text = "SITEEYE"
-            bbox = draw.textbbox((0, 0), text, font=self._font_mono)
-            tw = bbox[2] - bbox[0]
-            tx = (WIDTH - tw) // 2
-            draw.text((tx, 95), text, fill=TEXT_PRIMARY, font=self._font_mono)
-
-            # Full progress bar
-            bar_w = 160
-            bar_h = 3
-            bar_x = (WIDTH - bar_w) // 2
-            bar_y = 145
-            draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
-                                   radius=1, fill=ACCENT)
-
-            # Subtitle fading in
-            sub_alpha = min(1.0, (frame - 15) / 8.0)
-            sub_c = self._fade_color(TEXT_DIM, sub_alpha)
-            sub_text = "v2.0 | AI-POWERED FIELD ASSISTANT"
-            bbox2 = draw.textbbox((0, 0), sub_text, font=self._font_sub)
-            sw = bbox2[2] - bbox2[0]
+        def _draw_subtitle(alpha=1.0):
+            sub_text = "AI-POWERED FIELD ASSISTANT"
+            c = self._fade_color(TEXT_PRIMARY, alpha) if alpha < 1.0 else TEXT_PRIMARY
+            bbox = draw.textbbox((0, 0), sub_text, font=self._font_sub)
+            sw = bbox[2] - bbox[0]
             sx = (WIDTH - sw) // 2
-            draw.text((sx, 160), sub_text, fill=sub_c, font=self._font_sub)
+            draw.text((sx, 150), sub_text, fill=c, font=self._font_sub)
 
-        # Phase 4 (frames 26-40): System checks appear sequentially
-        else:
-            # Title
-            text = "SITEEYE"
-            bbox = draw.textbbox((0, 0), text, font=self._font_mono)
-            tw = bbox[2] - bbox[0]
-            tx = (WIDTH - tw) // 2
-            draw.text((tx, 95), text, fill=TEXT_PRIMARY, font=self._font_mono)
+        # Phase 1 (frames 1-8): Title fades in (gold)
+        if frame <= 8:
+            alpha = min(1.0, frame / 6.0)
+            _draw_title(alpha)
 
-            # Full progress bar
-            bar_w = 160
-            bar_h = 3
-            bar_x = (WIDTH - bar_w) // 2
-            bar_y = 145
-            draw.rounded_rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h],
-                                   radius=1, fill=ACCENT)
+        # Phase 2 (frames 9-18): Title + progress bar fills
+        elif frame <= 18:
+            _draw_title()
+            progress = (frame - 8) / 10.0
+            _draw_bar(progress)
 
-            # Subtitle fully visible
-            sub_text = "v2.0 | AI-POWERED FIELD ASSISTANT"
-            bbox2 = draw.textbbox((0, 0), sub_text, font=self._font_sub)
-            sw = bbox2[2] - bbox2[0]
-            sx = (WIDTH - sw) // 2
-            draw.text((sx, 160), sub_text, fill=TEXT_DIM, font=self._font_sub)
+        # Phase 3 (frames 19-28): Subtitle fades in
+        elif frame <= 28:
+            _draw_title()
+            _draw_bar(1.0)
+            sub_alpha = min(1.0, (frame - 18) / 6.0)
+            _draw_subtitle(sub_alpha)
 
-            # System checks (each appears 3 frames apart)
+        # Phase 4 (frames 29-44): System checks
+        elif frame <= 44:
+            _draw_title()
+            _draw_bar(1.0)
+            _draw_subtitle()
+
             checks = [
-                ("Camera", 26),
-                ("Audio", 30),
-                ("Network", 34),
+                ("Camera", 29),
+                ("Audio", 33),
+                ("Network", 37),
             ]
-            check_y = 185
+            check_y = 178
             for i, (label, appear_frame) in enumerate(checks):
                 if frame >= appear_frame:
                     alpha = min(1.0, (frame - appear_frame) / 3.0)
                     c = self._fade_color(STATUS_GREEN, alpha)
-                    tc = self._fade_color(TEXT_DIM, alpha)
-                    check_text = f"  {label}"
-                    # Checkmark
-                    cx = 60
-                    ty = check_y + i * 16
+                    tc = self._fade_color(TEXT_PRIMARY, alpha)
+                    cx = 65
+                    ty = check_y + i * 20
                     draw.text((cx, ty), "\u2713", fill=c, font=self._font_check)
-                    draw.text((cx + 14, ty), label, fill=tc, font=self._font_check)
+                    draw.text((cx + 16, ty), label, fill=tc, font=self._font_check)
+
+        # Phase 5 (frame 45+): auto-transition to idle
+        else:
+            # Boot complete — transition out
+            self.state = STATE_IDLE
 
     # ------------------------------------------------------------------
     # Drawing: Status bar

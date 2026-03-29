@@ -48,7 +48,7 @@ TARGET_FPS = 6
 FRAME_INTERVAL = 1.0 / TARGET_FPS
 
 # Boot animation frame count (matches lcd_ui boot sequence phases)
-BOOT_FRAMES = 45
+BOOT_FRAMES = 48  # Must exceed highest frame in _draw_boot phases
 
 
 def log(msg):
