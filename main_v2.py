@@ -65,8 +65,8 @@ class SiteEye:
 
         # Audio feedback files
         self._base_dir = os.path.dirname(os.path.abspath(__file__))
-        self._hold_timer = None
         self._held_long = False
+        self._press_id = 0  # increments on each press, cancels stale hold timers
 
         # Register button callbacks
         self.board.button_press_callback = self._on_button_press
@@ -101,46 +101,48 @@ class SiteEye:
             ), daemon=True).start()
 
     def _on_button_press(self):
-        """Button pressed — show hint, start hold timer."""
+        """Button pressed — immediate feedback + hold detection."""
         self._press_time = time.time()
         self._held_long = False
+        self._press_id += 1
+        current_id = self._press_id
+
+        # During recording, any press = stop recording
+        if self._recording:
+            self._play_feedback("click.wav")
+            self._stop_recording()
+            return
 
         if self._busy:
             return
 
-        # Immediate feedback: click sound + hint on screen
+        # Immediate feedback
         self._play_feedback("click.wav")
-        if not self._recording:
-            self.ui.set_status("Release → Voice  |  Hold → Camera")
+        self.ui.set_status("Hold → Camera  |  Release → Voice")
 
-        # Start a timer to detect hold (camera mode)
+        # Background timer: if still held after threshold, switch to camera mode
         def _check_hold():
             time.sleep(BUTTON_HOLD_THRESHOLD)
-            if time.time() - self._press_time >= BUTTON_HOLD_THRESHOLD and not self._busy:
+            # Only fire if this is still the same press (not stale)
+            if current_id == self._press_id and not self._busy and not self._recording:
                 self._held_long = True
                 self._play_feedback("camera_beep.wav")
-                self.ui.set_state(STATE_CAMERA)
-                self.ui.set_status("Release to capture photo")
+                self.ui.set_status("📷 Release to capture")
 
-        self._hold_timer = threading.Thread(target=_check_hold, daemon=True)
-        self._hold_timer.start()
+        threading.Thread(target=_check_hold, daemon=True).start()
 
     def _on_button_release(self):
-        """Button released — dispatch voice or camera based on hold duration."""
-        if self._busy:
-            if self._recording:
-                self._stop_recording()
+        """Button released — dispatch voice or camera."""
+        if self._busy or self._recording:
             return
 
         duration = time.time() - self._press_time
+        if duration < 0.05:
+            return  # Debounce — ignore spurious sub-50ms presses
 
-        if self._recording:
-            self._stop_recording()
-        elif self._held_long or duration > BUTTON_HOLD_THRESHOLD:
-            # Camera mode
+        if self._held_long or duration > BUTTON_HOLD_THRESHOLD:
             threading.Thread(target=self._camera_flow, daemon=True).start()
         else:
-            # Voice mode
             threading.Thread(target=self._voice_flow, daemon=True).start()
 
     def _voice_flow(self):
@@ -150,6 +152,7 @@ class SiteEye:
         self._busy = True
 
         log("\U0001f399 Voice flow started")
+        self.ui.set_status("Listening")
         self.ui.set_state(STATE_LISTENING)
 
         audio_path = "/tmp/siteeye_voice.wav"
@@ -177,19 +180,20 @@ class SiteEye:
             self.ui.set_state(STATE_ERROR, "Record failed")
             self._play_feedback("error.wav")
             time.sleep(2)
-            self.ui.set_state(STATE_IDLE)
+            self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
             self._busy = False
             return
 
         if not os.path.exists(audio_path) or os.path.getsize(audio_path) < 1000:
             log("Recording too short")
-            self.ui.set_state(STATE_IDLE)
+            self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
             self._busy = False
             return
 
         # Capture background image for context
         img_path = self._capture_photo()
 
+        self.ui.set_status("Processing")
         self.ui.set_state(STATE_THINKING)
         log("\U0001f504 Sending to proxy...")
 
@@ -241,7 +245,7 @@ class SiteEye:
             except Exception:
                 pass
 
-        self.ui.set_state(STATE_IDLE)
+        self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
         self._busy = False
 
     def _camera_flow(self):
@@ -260,7 +264,7 @@ class SiteEye:
             self.ui.set_state(STATE_ERROR, "Camera failed")
             self._play_feedback("error.wav")
             time.sleep(2)
-            self.ui.set_state(STATE_IDLE)
+            self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
             self._busy = False
             return
 
@@ -312,7 +316,7 @@ class SiteEye:
         except Exception:
             pass
 
-        self.ui.set_state(STATE_IDLE)
+        self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
         self._busy = False
 
     def _capture_photo(self):
@@ -416,7 +420,7 @@ class SiteEye:
             log("\u26a0\ufe0f Proxy unreachable")
             self.ui.set_status("Offline")
 
-        self.ui.set_state(STATE_IDLE)
+        self.ui.set_status(""); self.ui.set_state(STATE_IDLE)
 
         # Startup audio: chime → voice announcement
         base_dir = os.path.dirname(os.path.abspath(__file__))

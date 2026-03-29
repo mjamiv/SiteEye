@@ -565,20 +565,22 @@ class LcdUI:
     # ------------------------------------------------------------------
 
     def _draw_listening_ring(self, draw):
-        """Subtle pulsing blue ring around face area."""
+        """Subtle pulsing audio bars below face — clean, no floating bubbles."""
         frame = self._anim_frame
-        pulse = 0.4 + 0.6 * abs(math.sin(frame * 0.12))
-        alpha = int(pulse * 60)
-        c = (ACCENT[0], ACCENT[1], ACCENT[2])
-        # Faded concentric ring
-        ring_cx = 120
-        ring_cy = 135
-        ring_r = 68 + int(4 * math.sin(frame * 0.1))
-        # Draw ring as arc approximation (thin ellipse outline)
-        c_faded = tuple(max(0, min(255, int(v * pulse * 0.5))) for v in c)
-        draw.ellipse([ring_cx - ring_r, ring_cy - ring_r,
-                      ring_cx + ring_r, ring_cy + ring_r],
-                     outline=c_faded, width=2)
+        y = 182
+        cx = 120
+        # 5 small bars, centered, pulsing at different phases
+        bar_w = 3
+        bar_gap = 6
+        n_bars = 5
+        total_w = n_bars * bar_w + (n_bars - 1) * bar_gap
+        start_x = cx - total_w // 2
+        for i in range(n_bars):
+            x = start_x + i * (bar_w + bar_gap)
+            h = 3 + int(5 * abs(math.sin(frame * 0.2 + i * 0.9)))
+            brightness = 0.4 + 0.6 * abs(math.sin(frame * 0.15 + i * 0.7))
+            c = tuple(int(v * brightness) for v in ACCENT)
+            draw.rectangle([x, y - h, x + bar_w, y + h], fill=c)
 
     def _draw_thinking_dots(self, draw):
         """Animated dots below face (...)."""
