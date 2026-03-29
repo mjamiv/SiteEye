@@ -73,7 +73,9 @@ class SiteEye:
         self._press_id = 0
         self._tap_count = 0
         self._dispatch_timer = None
-        self._camera_shutter = None  # None=not in viewfinder, False=waiting, True=capture
+        self._live_mode = False       # Gemini Live streaming active
+        self._live_session_id = None  # Current live session ID
+        self._live_thread = None      # Background streaming thread
 
         # Register button callbacks
         self.board.button_press_callback = self._on_button_press
@@ -115,57 +117,174 @@ class SiteEye:
         except Exception as e:
             log(f"Telegram send failed: {e}")
 
-    def _info_screen(self):
-        """Double-tap: show device info on LCD for 5 seconds."""
-        if self._busy:
-            return
-        self._busy = True
+    def _toggle_live_mode(self):
+        """Double-tap: toggle Gemini Live streaming conversation on/off."""
+        if self._live_mode:
+            # Stop live mode
+            self._stop_live()
+        else:
+            # Start live mode
+            self._start_live()
+
+    def _start_live(self):
+        """Start Gemini Live streaming session."""
         self._play_feedback("click.wav")
-        log("ℹ️ Device info screen")
+        log("🔴 Starting Gemini Live mode")
+        self.ui.set_status("LIVE - Connecting...")
+        self.ui.set_state(STATE_LISTENING)
 
         try:
-            temp = int(open("/sys/class/thermal/thermal_zone0/temp").read().strip()) / 1000
-        except Exception:
-            temp = 0
-        try:
-            uptime_s = float(open("/proc/uptime").read().split()[0])
-            hours, mins = int(uptime_s // 3600), int((uptime_s % 3600) // 60)
-            uptime = f"{hours}h {mins}m"
-        except Exception:
-            uptime = "?"
-        try:
-            ip = subprocess.check_output(["hostname", "-I"], text=True).strip().split()[0]
-        except Exception:
-            ip = "no network"
-        try:
-            df = subprocess.check_output(["df", "-h", "/"], text=True).split("\n")[1].split()
-            disk = f"{df[2]} / {df[1]}"
-        except Exception:
-            disk = "?"
+            r = requests.post(f"{PROXY_URL}/live/start", timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                self._live_session_id = data.get("session_id")
+                self._live_mode = True
+                log(f"🔴 Live session: {self._live_session_id}")
+                self.ui.set_status("LIVE - Speak naturally")
 
-        info_lines = [
-            f"IP: {ip}",
-            f"Temp: {temp:.1f} C",
-            f"Uptime: {uptime}",
-            f"Disk: {disk}",
-            f"Proxy: {'Online' if self._check_proxy() else 'Offline'}",
-        ]
-        self.ui.set_status("Device Info")
-        self.ui.set_state(STATE_IDLE)
-        self.ui.response_text = "\n".join(info_lines)
-        self.ui._last_buf = None
-        time.sleep(5)
-        self.ui.response_text = ""
+                # Start background audio streaming
+                self._live_thread = threading.Thread(target=self._live_audio_loop, daemon=True)
+                self._live_thread.start()
+            else:
+                log(f"Live start failed: {r.status_code}")
+                self.ui.set_status("Live failed")
+                self._play_feedback("error.wav")
+                time.sleep(2)
+                self.ui.set_status("")
+                self.ui.set_state(STATE_IDLE)
+        except Exception as e:
+            log(f"Live start error: {e}")
+            self.ui.set_status("Live failed")
+            self._play_feedback("error.wav")
+            time.sleep(2)
+            self.ui.set_status("")
+            self.ui.set_state(STATE_IDLE)
+
+    def _stop_live(self):
+        """Stop Gemini Live session."""
+        log("⬛ Stopping Gemini Live mode")
+        self._live_mode = False
+
+        if self._live_session_id:
+            try:
+                requests.post(f"{PROXY_URL}/live/stop",
+                    json={"session_id": self._live_session_id}, timeout=5)
+            except Exception:
+                pass
+            self._live_session_id = None
+
+        # Kill any running arecord
+        try:
+            subprocess.run(["killall", "arecord"], capture_output=True, timeout=2)
+        except Exception:
+            pass
+
+        self._play_feedback("click.wav")
         self.ui.set_status("")
+        self.ui.response_text = ""
         self.ui.set_state(STATE_IDLE)
         self._busy = False
+        log("⬛ Live mode ended")
 
-    def _check_proxy(self):
-        try:
-            r = requests.get(f"{PROXY_URL}/health", timeout=3)
-            return r.status_code == 200
-        except Exception:
-            return False
+    def _live_audio_loop(self):
+        """Background loop: stream mic → proxy → Gemini, play responses."""
+        CHUNK_DURATION = 0.5  # seconds per chunk
+        CHUNK_SAMPLES = int(16000 * CHUNK_DURATION)  # 16kHz
+        CHUNK_BYTES = CHUNK_SAMPLES * 2  # 16-bit = 2 bytes per sample
+
+        self._busy = True
+
+        while self._live_mode and self._live_session_id:
+            try:
+                # Record a short audio chunk
+                tmp_raw = "/tmp/siteeye_live_chunk.raw"
+                subprocess.run(
+                    ["arecord", "-D", AUDIO_DEV, "-f", "S16_LE", "-r", "16000",
+                     "-c", "1", "-t", "raw", "-d", "1", tmp_raw],
+                    capture_output=True, timeout=5
+                )
+
+                if not os.path.exists(tmp_raw) or os.path.getsize(tmp_raw) < 100:
+                    continue
+
+                # Send audio chunk to proxy
+                with open(tmp_raw, "rb") as f:
+                    pcm_data = f.read()
+
+                r = requests.post(
+                    f"{PROXY_URL}/live/audio?session_id={self._live_session_id}",
+                    data=pcm_data,
+                    headers={"Content-Type": "application/octet-stream"},
+                    timeout=5
+                )
+
+                if r.status_code == 200 and len(r.content) > 100:
+                    # Got audio response — play it
+                    self.ui.set_state(STATE_SPEAKING)
+                    self.ui.set_status("LIVE - Speaking")
+
+                    # Write response PCM to WAV for aplay
+                    resp_wav = "/tmp/siteeye_live_resp.wav"
+                    self._pcm_to_wav(r.content, resp_wav, sample_rate=24000)
+
+                    subprocess.run(
+                        ["aplay", "-D", AUDIO_DEV, resp_wav],
+                        capture_output=True, timeout=30
+                    )
+
+                    self.ui.set_state(STATE_LISTENING)
+                    self.ui.set_status("LIVE - Speak naturally")
+
+                    try:
+                        os.remove(resp_wav)
+                    except Exception:
+                        pass
+
+                elif r.status_code == 204:
+                    # No response yet — Gemini is still listening
+                    self.ui.set_state(STATE_LISTENING)
+                    self.ui.set_status("LIVE - Listening")
+
+                # Check for text/transcription via status
+                try:
+                    status_r = requests.get(
+                        f"{PROXY_URL}/live/status?session_id={self._live_session_id}",
+                        timeout=2)
+                    if status_r.status_code == 200:
+                        sdata = status_r.json()
+                        text = sdata.get("text", "")
+                        if text:
+                            self.ui.response_text = text
+                            # Mirror to Telegram
+                            threading.Thread(target=self._send_telegram,
+                                args=(f"🔴 LIVE\n{text}",), daemon=True).start()
+                except Exception:
+                    pass
+
+                try:
+                    os.remove(tmp_raw)
+                except Exception:
+                    pass
+
+            except Exception as e:
+                log(f"Live loop error: {e}")
+                time.sleep(0.5)
+
+        self._busy = False
+
+    def _pcm_to_wav(self, pcm_data, wav_path, sample_rate=24000):
+        """Convert raw PCM bytes to a WAV file for aplay."""
+        import struct
+        with open(wav_path, "wb") as f:
+            data_size = len(pcm_data)
+            # WAV header
+            f.write(b'RIFF')
+            f.write(struct.pack('<I', 36 + data_size))
+            f.write(b'WAVEfmt ')
+            f.write(struct.pack('<IHHIIHH', 16, 1, 1, sample_rate, sample_rate * 2, 2, 16))
+            f.write(b'data')
+            f.write(struct.pack('<I', data_size))
+            f.write(pcm_data)
 
     def _play_feedback(self, name):
         """Play a short audio feedback file (non-blocking)."""
@@ -187,6 +306,11 @@ class SiteEye:
         if self._recording:
             self._play_feedback("click.wav")
             self._stop_recording()
+            return
+
+        # During live mode, any press = stop live
+        if self._live_mode:
+            self._stop_live()
             return
 
         if self._busy:
@@ -245,7 +369,7 @@ class SiteEye:
             if self._dispatch_timer:
                 self._dispatch_timer.cancel()
                 self._dispatch_timer = None
-            threading.Thread(target=self._info_screen, daemon=True).start()
+            threading.Thread(target=self._toggle_live_mode, daemon=True).start()
 
     def _voice_flow(self):
         """Full voice pipeline: record → proxy → TTS → speaker."""
@@ -498,11 +622,18 @@ class SiteEye:
                     threading.Thread(target=self._voice_flow, daemon=True).start()
                 elif cmd == "c":
                     threading.Thread(target=self._camera_flow, daemon=True).start()
+                elif cmd == "l":
+                    threading.Thread(target=self._toggle_live_mode, daemon=True).start()
                 elif cmd == "q":
+                    if self._live_mode:
+                        self._stop_live()
                     self._running = False
                     break
                 elif cmd == "s":
-                    self._stop_recording()
+                    if self._live_mode:
+                        self._stop_live()
+                    elif self._recording:
+                        self._stop_recording()
             except (EOFError, KeyboardInterrupt):
                 self._running = False
                 break
@@ -564,7 +695,7 @@ class SiteEye:
 
         log("\nControls:")
         log("  Button tap = voice | Button hold (>1s) = camera")
-        log("  Keyboard: v=voice c=camera s=stop q=quit\n")
+        log("  Keyboard: v=voice c=camera l=live s=stop q=quit\n")
 
         if sys.stdin.isatty():
             try:

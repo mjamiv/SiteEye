@@ -702,7 +702,7 @@ class LcdUI:
         hints = [
             "Tap = Voice",
             "Hold = Camera",
-            "2x Tap = Info",
+            "2x Tap = Live Mode",
         ]
         idx = int(time.time() / 3) % len(hints)
         hint = hints[idx]
