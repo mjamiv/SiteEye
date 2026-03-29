@@ -228,7 +228,7 @@ class SiteEye:
             self._tap_count = 0
             self._last_release_time = 0
             if self._tap_timer:
-                self._tap_timer.cancel()
+                self._tap_count = 0  # cancel pending single-tap
             threading.Thread(target=self._info_screen, daemon=True).start()
             return
 
