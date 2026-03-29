@@ -170,6 +170,10 @@ class SiteEye:
                     self._play_audio_b64(audio_b64)
                 else:
                     time.sleep(2)
+
+                # Keep text visible briefly, then clear
+                time.sleep(3)
+                self.ui.response_text = ""
             else:
                 log(f"❌ Proxy error: {r.status_code}")
                 self.ui.set_state(STATE_ERROR, f"Error {r.status_code}")
@@ -237,6 +241,10 @@ class SiteEye:
                         time.sleep(3)
                 except:
                     time.sleep(3)
+
+                # Keep text visible briefly, then clear
+                time.sleep(3)
+                self.ui.response_text = ""
             else:
                 log(f"❌ Vision error: {r.status_code}")
                 self.ui.set_state(STATE_ERROR, "Vision failed")
@@ -287,7 +295,7 @@ class SiteEye:
                 f.write(audio_bytes)
             subprocess.run(
                 ["aplay", "-D", AUDIO_DEV, tmp_path],
-                capture_output=True, timeout=30
+                capture_output=True, timeout=120
             )
             os.remove(tmp_path)
         except Exception as e:
