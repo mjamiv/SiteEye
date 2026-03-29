@@ -119,12 +119,12 @@ class LcdUI:
                 rc = "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf"
                 rcb = "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf"
             mono = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
-            self._font_sm = ImageFont.truetype(rc, 14)
-            self._font_md = ImageFont.truetype(rc, 15)
-            self._font_lg = ImageFont.truetype(rcb, 24)
-            self._font_mono = ImageFont.truetype(rcb, 48)     # Boot title — BIG
-            self._font_sub = ImageFont.truetype(rc, 14)       # Subtitle
-            self._font_check = ImageFont.truetype(rc, 14)     # System checks
+            self._font_sm = ImageFont.truetype(rc, 16)        # Status bar, hints
+            self._font_md = ImageFont.truetype(rc, 18)        # Response text, prompts
+            self._font_lg = ImageFont.truetype(rcb, 28)       # Headings
+            self._font_mono = ImageFont.truetype(rcb, 48)     # Boot title SITEEYE
+            self._font_sub = ImageFont.truetype(rcb, 16)      # Boot subtitle
+            self._font_check = ImageFont.truetype(rcb, 16)    # Boot system checks
         except Exception:
             self._font_sm = ImageFont.load_default()
             self._font_md = self._font_sm
@@ -458,7 +458,7 @@ class LcdUI:
                     c = self._fade_color(STATUS_GREEN, alpha)
                     tc = self._fade_color(TEXT_PRIMARY, alpha)
                     cx = 65
-                    ty = check_y + i * 20
+                    ty = check_y + i * 24
                     draw.text((cx, ty), "OK", fill=c, font=self._font_check)
                     draw.text((cx + 16, ty), label, fill=tc, font=self._font_check)
 
@@ -698,23 +698,23 @@ class LcdUI:
         hints = [
             "Tap = Voice",
             "Hold = Camera",
+            "2x Tap = Info",
         ]
-        idx = int(time.time() / 4) % len(hints)
+        idx = int(time.time() / 3) % len(hints)
         hint = hints[idx]
 
-        # Centered, readable, uses medium font
         bbox = draw.textbbox((0, 0), hint, font=self._font_md)
         tw = bbox[2] - bbox[0]
         tx = (WIDTH - tw) // 2
-        draw.text((tx, SAFE_BOT - 8), hint, fill=TEXT_DIM, font=self._font_md)
+        draw.text((tx, SAFE_BOT - 10), hint, fill=TEXT_DIM, font=self._font_md)
 
     def _draw_response_text(self, draw, text):
         panel_x = SAFE_LEFT + 2
         panel_x2 = SAFE_RIGHT - 2
         y_start = 195
         panel_y2 = SAFE_BOT
-        line_h = 16
-        max_lines = 5
+        line_h = 22
+        max_lines = 4
         font = self._font_md
 
         # Dark panel with rounded corners
@@ -774,8 +774,8 @@ class LcdUI:
         if text:
             max_w = SAFE_RIGHT - SAFE_LEFT - 8
             y_start = photo_h + 8
-            line_h = 16
-            max_lines = 6
+            line_h = 22
+            max_lines = 4
             font = self._font_md
 
             # Check for "Analyzing..." to add animated dots
