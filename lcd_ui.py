@@ -232,9 +232,12 @@ class LcdUI:
             elif state == STATE_SPEAKING:
                 self._draw_speaking_pulse(draw)
 
-            # Response text OR idle hint
+            # Feedback text area (below face, above bottom safe zone)
             if resp:
                 self._draw_response_text(draw, resp)
+            elif status and state != STATE_IDLE:
+                # Show status feedback centered below face
+                self._draw_feedback_text(draw, status)
             elif state == STATE_IDLE:
                 self._draw_idle_hint(draw)
 
@@ -489,18 +492,12 @@ class LcdUI:
         draw.ellipse([dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r],
                      fill=dot_color)
 
-        # Status text next to dot — brighter for readability
-        if status:
-            draw.text((dot_x + dot_r + 6, y), status, fill=TEXT_PRIMARY, font=self._font_sm)
-
-        # "SiteEye" wordmark (right side)
+        # "SiteEye" wordmark (right side of dot)
         mark = "SiteEye"
-        bbox = draw.textbbox((0, 0), mark, font=self._font_sm)
-        mw = bbox[2] - bbox[0]
-        draw.text((SAFE_RIGHT - mw - 4, y), mark, fill=ACCENT, font=self._font_sm)
+        draw.text((dot_x + dot_r + 6, y), mark, fill=ACCENT, font=self._font_sm)
 
         # Separator line
-        sep_y = y + 18
+        sep_y = y + 20
         draw.line([(SAFE_LEFT, sep_y), (SAFE_RIGHT, sep_y)], fill=SEPARATOR_COLOR, width=1)
 
     # ------------------------------------------------------------------
@@ -692,6 +689,13 @@ class LcdUI:
     # ------------------------------------------------------------------
     # Drawing: Response text
     # ------------------------------------------------------------------
+
+    def _draw_feedback_text(self, draw, text):
+        """Show state feedback text centered below face — Recording, Processing, etc."""
+        bbox = draw.textbbox((0, 0), text, font=self._font_md)
+        tw = bbox[2] - bbox[0]
+        tx = (WIDTH - tw) // 2
+        draw.text((tx, SAFE_BOT - 12), text, fill=ACCENT, font=self._font_md)
 
     def _draw_idle_hint(self, draw):
         """Show button usage hint at bottom when idle."""
