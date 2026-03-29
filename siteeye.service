@@ -1,0 +1,16 @@
+[Unit]
+Description=SiteEye v2 — Wearable AI Assistant
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi-molt
+WorkingDirectory=/home/pi-molt/molt-device
+ExecStart=/home/pi-molt/molt-device/venv/bin/python3 main_v2.py
+Restart=on-failure
+RestartSec=5
+Environment=SITEEYE_PROXY=https://molted.tail4a98c5.ts.net
+
+[Install]
+WantedBy=multi-user.target
