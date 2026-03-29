@@ -72,7 +72,8 @@ class SiteEye:
         self._held_long = False
         self._press_id = 0
         self._tap_count = 0
-        self._dispatch_timer = None  # threading.Timer for delayed dispatch
+        self._dispatch_timer = None
+        self._camera_shutter = None  # None=not in viewfinder, False=waiting, True=capture
 
         # Register button callbacks
         self.board.button_press_callback = self._on_button_press
@@ -186,6 +187,12 @@ class SiteEye:
         if self._recording:
             self._play_feedback("click.wav")
             self._stop_recording()
+            return
+
+        # During viewfinder, any press = capture
+        if hasattr(self, '_camera_shutter') and self._camera_shutter is False:
+            self._camera_shutter = True
+            self._play_feedback("click.wav")
             return
 
         if self._busy:
@@ -362,9 +369,9 @@ class SiteEye:
         self._busy = True
 
         log("\U0001f4f7 Camera flow — live viewfinder")
-        self.ui.set_status("Viewfinder — press to capture")
+        self.ui.set_status("Viewfinder - press to capture")
 
-        # Live viewfinder loop: stream camera to LCD until button press
+        # Live viewfinder: _camera_shutter=False means waiting, True means capture
         self._camera_shutter = False
         try:
             from picamera2 import Picamera2
@@ -375,13 +382,6 @@ class SiteEye:
             picam2.start()
             time.sleep(0.3)  # Let auto-exposure settle
 
-            # Set up shutter trigger
-            def _shutter_press():
-                self._camera_shutter = True
-            # Temporarily override button callback for shutter
-            old_press = self.board.button_press_callback
-            self.board.button_press_callback = _shutter_press
-
             log("Live viewfinder active — press button to capture")
             frame_count = 0
             while not self._camera_shutter and self._running:
@@ -391,13 +391,12 @@ class SiteEye:
                     frame_count += 1
                 except Exception:
                     pass
-                time.sleep(0.08)  # ~12fps target for viewfinder
-                # Safety timeout: 30 seconds
-                if frame_count > 375:
+                time.sleep(0.08)
+                if frame_count > 375:  # 30s timeout
                     break
 
-            # Restore button callback
-            self.board.button_press_callback = old_press
+            # Done with viewfinder
+            self._camera_shutter = None
 
             # Capture final still at full resolution
             self._play_feedback("click.wav")
