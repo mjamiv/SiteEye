@@ -393,10 +393,18 @@ class SiteEye:
         log("  Button tap = voice | Button hold (>1s) = camera")
         log("  Keyboard: v=voice c=camera s=stop q=quit\n")
 
-        try:
-            self._keyboard_loop()
-        except:
-            pass
+        if sys.stdin.isatty():
+            try:
+                self._keyboard_loop()
+            except:
+                pass
+        else:
+            log("Headless mode — button only")
+            try:
+                while self._running:
+                    time.sleep(1)
+            except:
+                pass
 
         log("Shutting down...")
         self._running = False
