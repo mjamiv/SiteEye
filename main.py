@@ -21,7 +21,7 @@ import tempfile
 import requests
 from datetime import datetime
 
-sys.path.insert(0, '/home/pi-molt/Whisplay/Driver')
+sys.path.insert(0, os.path.expanduser('~/Whisplay/Driver'))
 
 from lcd_ui import (
     LcdUI,

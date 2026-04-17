@@ -11,7 +11,8 @@ import math
 import random
 import threading
 
-sys.path.insert(0, '/home/pi-molt/Whisplay/Driver')
+import os
+sys.path.insert(0, os.path.expanduser('~/Whisplay/Driver'))
 
 from PIL import Image, ImageDraw, ImageFont
 from WhisPlay import WhisPlayBoard

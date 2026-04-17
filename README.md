@@ -66,24 +66,70 @@ The Whisplay HAT provides the LCD display (1.69" IPS, 240×280, ST7789), WM8960 
 
 ### 1. Pi Client
 
+#### 1a. Install Whisplay HAT Driver
+
+This installs the display, audio (WM8960), LED, and button drivers for the Whisplay HAT.
+
 ```bash
-# Clone to Pi
+# Clone the Whisplay driver
+git clone https://github.com/PiSugar/Whisplay.git --depth 1 ~/Whisplay
+
+# Install the WM8960 audio codec driver (also enables I2S and I2C)
+cd ~/Whisplay/Driver
+sudo bash install_wm8960_drive.sh
+
+# Reboot to load the audio driver
+sudo reboot
+```
+
+After reboot, SSH back in (`ssh <username>@<hostname>.local`) and verify:
+
+```bash
+# Should show "wm8960soundcard"
+aplay -l | grep wm8960
+```
+
+#### 1b. Enable Camera and SPI
+
+```bash
+sudo raspi-config
+```
+
+Enable:
+- **Interface Options → SPI** (for the LCD display)
+
+> **Note:** On newer Raspberry Pi OS (Bookworm), the camera is enabled by default and may not appear in raspi-config. You can verify later with `rpicam-still -o test.jpg`.
+
+```bash
+sudo reboot
+```
+
+#### 1c. Install SiteEye
+
+SSH back in after reboot:
+
+```bash
+# Install SiteEye dependencies
+sudo apt install -y python3-numpy python3-pil
+
+# Clone SiteEye
 git clone https://github.com/mjamiv/SiteEye.git ~/siteeye
 cd ~/siteeye
 
-# Install dependencies
-pip install requests pillow
+# Create virtual environment and install Python packages
+python3 -m venv --system-site-packages venv
+source venv/bin/activate
+pip install requests
 
-# Configure
+# Configure environment
 cp .env.example ~/.env
 nano ~/.env  # Fill in SITEEYE_PROXY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-# Install service
+# Install service — creates a background process that runs SiteEye
+# automatically every time the Pi powers on. After this, you don't
+# need to manually start SiteEye — just turn on the Pi and it runs.
 chmod +x setup-service.sh
 ./setup-service.sh
-
-# Start
-sudo systemctl start siteeye
 ```
 
 ### 2. Proxy Server
@@ -132,6 +178,7 @@ The animated face reflects device state:
 ## Project Structure
 
 ```
+├── RPI_SETUP.md         # Pi setup guide — from blank SD card to SSH
 ├── main.py              # Pi client — button handling, voice/camera flows
 ├── lcd_ui.py            # LCD display — animated face, dashboard panels
 ├── server.py            # Proxy server — STT, AI, TTS, vision, dashboard API
