@@ -1,13 +1,11 @@
 #!/bin/bash
-# SiteEye service setup — run on the Pi as pi-molt
+# SiteEye service setup — run on the Pi
 # Usage: bash setup-service.sh
 #
-# Requires /home/pi-molt/.env with:
+# Requires ~/.env with:
 #   SITEEYE_PROXY=https://your-proxy.example.com
 #   TELEGRAM_BOT_TOKEN=...   (optional)
 #   TELEGRAM_CHAT_ID=...     (optional)
-#
-# Also export OPENAI_API_KEY in ~/.bashrc if not already in .env
 
 set -e
 
@@ -24,6 +22,8 @@ echo "✓ ~/.env found"
 
 # Create systemd service
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+CURRENT_USER="$(whoami)"
+USER_HOME="$(eval echo ~${CURRENT_USER})"
 
 sudo tee /etc/systemd/system/siteeye.service > /dev/null << EOF
 [Unit]
@@ -33,9 +33,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi-molt
+User=${CURRENT_USER}
 WorkingDirectory=${REPO_DIR}
-EnvironmentFile=/home/pi-molt/.env
+EnvironmentFile=${USER_HOME}/.env
 ExecStart=${REPO_DIR}/venv/bin/python3 ${REPO_DIR}/main.py
 Restart=on-failure
 RestartSec=5

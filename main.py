@@ -21,7 +21,7 @@ import tempfile
 import requests
 from datetime import datetime
 
-sys.path.insert(0, '/home/pi-molt/Whisplay/Driver')
+sys.path.insert(0, os.path.expanduser('~/Whisplay/Driver'))
 
 from lcd_ui import (
     LcdUI,
@@ -79,6 +79,7 @@ class SiteEye:
         # Dashboard state
         self._dashboard_active = False
         self._dashboard_panel = 0          # 0-3 current panel index
+        self._last_battery_check = 0       # timestamp of last battery read
         self._dashboard_data = {}          # cached data from proxy
         self._dashboard_last_tap = 0.0     # timestamp of last interaction
         self._dashboard_thread = None
@@ -142,7 +143,7 @@ class SiteEye:
             log(f"Dashboard fetch failed: {e}")
 
     def _get_device_stats(self):
-        """Gather local device stats (CPU temp, uptime, IP, disk)."""
+        """Gather local device stats (CPU temp, uptime, IP, battery)."""
         stats = {}
         try:
             with open("/sys/class/thermal/thermal_zone0/temp") as f:
@@ -174,6 +175,41 @@ class SiteEye:
         except Exception:
             stats["disk"] = "N/A"
 
+        # PiSugar battery
+        stats.update(self._get_battery_stats())
+
+        return stats
+
+    def _get_battery_stats(self):
+        """Read battery data from PiSugar power manager."""
+        import socket
+        stats = {"battery": "N/A", "battery_charging": False}
+        try:
+            def _pisugar_cmd(cmd):
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(2)
+                s.connect(("127.0.0.1", 8423))
+                s.sendall((cmd + "\n").encode())
+                data = s.recv(256).decode().strip()
+                s.close()
+                return data
+
+            # Battery percentage
+            resp = _pisugar_cmd("get battery")
+            # Response format: "battery: 75.00"
+            pct = float(resp.split(":")[1].strip())
+            stats["battery"] = f"{pct:.0f}%"
+            stats["battery_pct"] = pct
+
+            # Charging status
+            resp = _pisugar_cmd("get battery_charging")
+            charging = "true" in resp.lower()
+            stats["battery_charging"] = charging
+            if charging:
+                stats["battery"] += " (charging)"
+
+        except Exception as e:
+            log(f"Battery read failed: {e}")
         return stats
 
     def _open_dashboard(self):
@@ -242,6 +278,7 @@ class SiteEye:
             dev = self._dashboard_data.get("device", {})
             panel_data = {
                 "type": "device",
+                "battery": dev.get("battery", "N/A"),
                 "cpu_temp": dev.get("cpu_temp", "N/A"),
                 "uptime": dev.get("uptime", "N/A"),
                 "ip": dev.get("ip", "N/A"),
@@ -593,6 +630,17 @@ class SiteEye:
     def _display_loop(self):
         while self._running:
             frame_start = time.time()
+
+            # Refresh battery every 30 seconds
+            if time.time() - self._last_battery_check > 30:
+                self._last_battery_check = time.time()
+                try:
+                    batt = self._get_battery_stats()
+                    self.ui.battery_pct = batt.get("battery_pct", -1)
+                    self.ui.battery_charging = batt.get("battery_charging", False)
+                except Exception:
+                    pass
+
             try:
                 if not self._dashboard_active:
                     self.ui.render_frame()
@@ -659,16 +707,16 @@ class SiteEye:
         try:
             r = requests.get(f"{PROXY_URL}/health", timeout=5)
             if r.status_code == 200:
-                log("✅ Proxy connected")
-                self.ui.set_status("Connected")
+                health = r.json()
+                backend = health.get("backend", "unknown")
+                log(f"✅ Proxy connected (backend: {backend})")
+                self.ui.set_status(backend.upper())
             else:
                 log("⚠️ Proxy unhealthy")
-                self.ui.set_status("Proxy error")
+                self.ui.set_status("ERROR")
         except Exception:
             log("⚠️ Proxy unreachable")
-            self.ui.set_status("Offline")
-
-        self.ui.set_status("")
+            self.ui.set_status("OFFLINE")
         self.ui.set_state(STATE_IDLE)
 
         # Startup audio

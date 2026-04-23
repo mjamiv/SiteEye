@@ -37,10 +37,31 @@ def get_history_messages(system_prompt):
 # --- OpenAI clients ---
 whisper_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# --- OpenClaw gateway (internal) ---
-OPENCLAW_URL = os.environ.get("OPENCLAW_URL", "http://127.0.0.1:18790/v1/chat/completions")
+# --- OpenClaw gateway (optional — falls back to OpenAI if not set) ---
+OPENCLAW_URL = os.environ.get("OPENCLAW_URL", "")
 OPENCLAW_TOKEN = os.environ.get("OPENCLAW_TOKEN", "")
+USE_OPENCLAW = bool(OPENCLAW_URL and OPENCLAW_TOKEN)
 DEVICE_MODEL = "anthropic/claude-sonnet-4-6"
+OPENAI_CHAT_MODEL = "gpt-4o"
+
+
+def ai_chat(messages, model=None, max_tokens=120):
+    """Send a chat request — uses OpenClaw if configured, otherwise OpenAI directly."""
+    if USE_OPENCLAW:
+        resp = requests.post(
+            OPENCLAW_URL,
+            headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
+            json={"model": model or DEVICE_MODEL, "max_tokens": max_tokens, "messages": messages},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            return resp.json()["choices"][0]["message"]["content"]
+        raise Exception(f"Gateway error {resp.status_code}")
+    else:
+        resp = whisper_client.chat.completions.create(
+            model=OPENAI_CHAT_MODEL, max_tokens=max_tokens, messages=messages
+        )
+        return resp.choices[0].message.content
 
 # --- System prompts ---
 DEVICE_SYSTEM = """You are Molt — Michael's AI on his wearable device. Spoken aloud through earphones.
@@ -107,22 +128,10 @@ def voice():
             assistant_text = f"Vision error: {str(e)[:60]}"
     else:
         try:
-            resp = requests.post(
-                OPENCLAW_URL,
-                headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
-                json={
-                    "model": "openclaw:main",
-                    "messages": [
-                        {"role": "system", "content": DEVICE_SYSTEM},
-                        {"role": "user", "content": f"[Voice from Molt Device] {transcription}"},
-                    ]
-                },
-                timeout=60,
-            )
-            if resp.status_code == 200:
-                assistant_text = resp.json()["choices"][0]["message"]["content"]
-            else:
-                assistant_text = f"Gateway error {resp.status_code}"
+            assistant_text = ai_chat([
+                {"role": "system", "content": DEVICE_SYSTEM},
+                {"role": "user", "content": f"[Voice from Molt Device] {transcription}"},
+            ])
         except requests.exceptions.Timeout:
             assistant_text = "Thinking too hard. Try again."
         except Exception as e:
@@ -141,20 +150,8 @@ def chat():
 
     try:
         history_append("user", text)
-        resp = requests.post(
-            OPENCLAW_URL,
-            headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
-            json={
-                "model": DEVICE_MODEL,
-                "messages": get_history_messages(DEVICE_SYSTEM),
-            },
-            timeout=60,
-        )
-        if resp.status_code == 200:
-            assistant_text = resp.json()["choices"][0]["message"]["content"]
-            history_append("assistant", assistant_text)
-        else:
-            assistant_text = f"Gateway error {resp.status_code}"
+        assistant_text = ai_chat(get_history_messages(DEVICE_SYSTEM))
+        history_append("assistant", assistant_text)
     except requests.exceptions.Timeout:
         assistant_text = "Thinking too hard. Try again."
     except Exception as e:
@@ -178,26 +175,13 @@ def vision():
         return jsonify({"error": "No image"}), 400
 
     try:
-        resp = requests.post(
-            OPENCLAW_URL,
-            headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
-            json={
-                "model": "openai/gpt-4o-mini",
-                "max_tokens": 120,
-                "messages": [
-                    {"role": "system", "content": VISION_SYSTEM},
-                    {"role": "user", "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                    ]}
-                ]
-            },
-            timeout=60,
-        )
-        if resp.status_code == 200:
-            assistant_text = resp.json()["choices"][0]["message"]["content"]
-        else:
-            assistant_text = f"Gateway error {resp.status_code}: {resp.text[:60]}"
+        assistant_text = ai_chat([
+            {"role": "system", "content": VISION_SYSTEM},
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+            ]}
+        ], model="openai/gpt-4o-mini")
     except requests.exceptions.Timeout:
         assistant_text = "Thinking too hard. Try again."
     except Exception as e:
@@ -218,26 +202,13 @@ def vision_tts():
 
     # Vision
     try:
-        resp = requests.post(
-            OPENCLAW_URL,
-            headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
-            json={
-                "model": "openai/gpt-4o",
-                "max_tokens": 120,
-                "messages": [
-                    {"role": "system", "content": VISION_SYSTEM},
-                    {"role": "user", "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                    ]}
-                ]
-            },
-            timeout=60,
-        )
-        if resp.status_code == 200:
-            response_text = resp.json()["choices"][0]["message"]["content"]
-        else:
-            response_text = f"Vision error {resp.status_code}"
+        response_text = ai_chat([
+            {"role": "system", "content": VISION_SYSTEM},
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+            ]}
+        ], model="openai/gpt-4o")
     except Exception as e:
         response_text = f"Vision error: {str(e)[:60]}"
 
@@ -301,41 +272,17 @@ def voice_all():
 
     try:
         if needs_vision and img_b64:
-            resp = requests.post(
-                OPENCLAW_URL,
-                headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
-                json={
-                    "model": "openai/gpt-4o-mini",
-                    "max_tokens": 120,
-                    "messages": [
-                        {"role": "system", "content": VISION_SYSTEM},
-                        {"role": "user", "content": [
-                            {"type": "text", "text": transcription},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-                        ]}
-                    ]
-                },
-                timeout=60,
-            )
+            assistant_text = ai_chat([
+                {"role": "system", "content": VISION_SYSTEM},
+                {"role": "user", "content": [
+                    {"type": "text", "text": transcription},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                ]}
+            ], model="openai/gpt-4o-mini")
         else:
             history_append("user", transcription)
-            resp = requests.post(
-                OPENCLAW_URL,
-                headers={"Authorization": f"Bearer {OPENCLAW_TOKEN}", "Content-Type": "application/json"},
-                json={
-                    "model": DEVICE_MODEL,
-                    "max_tokens": 120,
-                    "messages": get_history_messages(DEVICE_SYSTEM),
-                },
-                timeout=60,
-            )
-
-        if resp.status_code == 200:
-            assistant_text = resp.json()["choices"][0]["message"]["content"]
-            if not (needs_vision and img_b64):
-                history_append("assistant", assistant_text)
-        else:
-            assistant_text = f"Gateway error {resp.status_code}"
+            assistant_text = ai_chat(get_history_messages(DEVICE_SYSTEM))
+            history_append("assistant", assistant_text)
     except requests.exceptions.Timeout:
         assistant_text = "Thinking too hard. Try again."
     except Exception as e:
@@ -443,8 +390,13 @@ def dashboard():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "siteeye-proxy", "backend": "openclaw", "vision": True})
+    backend = "openclaw" if USE_OPENCLAW else "openai"
+    return jsonify({"status": "ok", "service": "siteeye-proxy", "backend": backend, "vision": True})
 
 
 if __name__ == "__main__":
+    if USE_OPENCLAW:
+        print(f"Backend: OpenClaw ({OPENCLAW_URL})")
+    else:
+        print("Backend: OpenAI direct (no OpenClaw configured)")
     app.run(host="0.0.0.0", port=5757)
